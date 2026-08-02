@@ -18,7 +18,7 @@ pub const MAX_BREEDING_STEPS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
-    Species,
+    Pals,
     Passives,
     Results,
 }
@@ -32,7 +32,7 @@ pub struct App<'db> {
     pub species_filter: String,
     pub species_cursor: usize,
     pub target: Option<PalName>,
-    /// Progenitor species marked in the Species pane. Non-empty marks
+    /// Progenitor species marked in the Pals pane. Non-empty marks
     /// switch the search to progenitor mode: plans start from a free
     /// male + female pair of each marked species and nothing else —
     /// the toml pool and wild captures stay out.
@@ -61,7 +61,7 @@ impl<'db> App<'db> {
             index,
             odds,
             owned,
-            focus: Pane::Species,
+            focus: Pane::Pals,
             species_filter: String::new(),
             species_cursor: 0,
             target: None,
@@ -147,7 +147,7 @@ impl<'db> App<'db> {
 
     pub fn run_search(&mut self) {
         let Some(target) = self.target.clone() else {
-            "pick a target species first (Enter in the Species pane)".clone_into(&mut self.status);
+            "pick a target pal first (Enter in the Pals pane)".clone_into(&mut self.status);
             return;
         };
         let goal = BreedingGoal {
@@ -169,7 +169,7 @@ impl<'db> App<'db> {
             Ok(plans) => {
                 self.status = if plans.is_empty() {
                     if progenitor_mode && !self.selected_passives.is_empty() {
-                        "no plans — species progenitors carry no passives; \
+                        "no plans — progenitor pals carry no passives; \
                          deselect passives or plan from pals.toml"
                             .to_owned()
                     } else {
@@ -180,7 +180,7 @@ impl<'db> App<'db> {
                     }
                 } else if progenitor_mode {
                     format!(
-                        "{} plan(s) from {} progenitor species",
+                        "{} plan(s) from {} progenitor pal(s)",
                         plans.len(),
                         self.progenitors.len()
                     )
@@ -199,7 +199,7 @@ impl<'db> App<'db> {
 
     fn confirm(&mut self) {
         match self.focus {
-            Pane::Species => {
+            Pane::Pals => {
                 if let Some(pal) = self.species_rows().get(self.species_cursor).copied() {
                     self.target = Some(pal.name.clone());
                     self.status = format!("target: {}", pal.display_name);
@@ -227,7 +227,7 @@ impl<'db> App<'db> {
     }
 
     fn toggle_progenitor(&mut self) {
-        if self.focus != Pane::Species {
+        if self.focus != Pane::Pals {
             return;
         }
         let Some(pal) = self.species_rows().get(self.species_cursor).copied() else {
@@ -239,7 +239,7 @@ impl<'db> App<'db> {
         } else {
             self.progenitors.push(pal.name.clone());
             self.status = format!(
-                "progenitor added: {} — plans will start from the {} marked species only",
+                "progenitor added: {} — plans will start from the {} marked pal(s) only",
                 pal.display_name,
                 self.progenitors.len()
             );
@@ -249,7 +249,7 @@ impl<'db> App<'db> {
     fn toggle_wild(&mut self) {
         self.allow_wild = !self.allow_wild;
         self.status = if self.allow_wild {
-            "wild pals: on — any catchable species can join plans".to_owned()
+            "wild pals: on — any catchable pal can join plans".to_owned()
         } else {
             "wild pals: off — plans use only the owned pool".to_owned()
         };
@@ -268,12 +268,12 @@ impl<'db> App<'db> {
 
     fn move_cursor(&mut self, delta: isize) {
         let len = match self.focus {
-            Pane::Species => self.species_rows().len(),
+            Pane::Pals => self.species_rows().len(),
             Pane::Passives => self.passive_rows().len(),
             Pane::Results => self.plans.len(),
         };
         let cursor = match self.focus {
-            Pane::Species => &mut self.species_cursor,
+            Pane::Pals => &mut self.species_cursor,
             Pane::Passives => &mut self.passive_cursor,
             Pane::Results => &mut self.plan_cursor,
         };
@@ -282,7 +282,7 @@ impl<'db> App<'db> {
 
     fn active_filter(&mut self) -> Option<&mut String> {
         match self.focus {
-            Pane::Species => Some(&mut self.species_filter),
+            Pane::Pals => Some(&mut self.species_filter),
             Pane::Passives => Some(&mut self.passive_filter),
             Pane::Results => None,
         }
@@ -290,7 +290,7 @@ impl<'db> App<'db> {
 
     fn reset_cursor(&mut self) {
         match self.focus {
-            Pane::Species => self.species_cursor = 0,
+            Pane::Pals => self.species_cursor = 0,
             Pane::Passives => self.passive_cursor = 0,
             Pane::Results => {}
         }
@@ -324,9 +324,9 @@ fn matches_filter(filter: &str, display_name: &str, internal_name: &str) -> bool
 
 fn next_pane(pane: Pane) -> Pane {
     match pane {
-        Pane::Species => Pane::Passives,
+        Pane::Pals => Pane::Passives,
         Pane::Passives => Pane::Results,
-        Pane::Results => Pane::Species,
+        Pane::Results => Pane::Pals,
     }
 }
 
@@ -430,10 +430,10 @@ mod tests {
                 "unexpected leaf species {species}"
             );
         }
-        assert!(app.status.contains("2 progenitor species"));
+        assert!(app.status.contains("2 progenitor pal(s)"));
 
         // Unmarking returns to pool planning.
-        app.focus = Pane::Species;
+        app.focus = Pane::Pals;
         app.handle_key(key(KeyCode::F(4)));
         assert_eq!(app.progenitors.len(), 1);
     }

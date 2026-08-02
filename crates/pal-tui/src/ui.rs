@@ -44,10 +44,10 @@ fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
         .as_ref()
         .map_or("none", |name| display(app.db(), name));
     let title = if app.progenitors.is_empty() {
-        format!(" Species — target: {target} ")
+        format!(" Pals — target: {target} ")
     } else {
         format!(
-            " Species — target: {target} · progenitors: {} ",
+            " Pals — target: {target} · progenitors: {} ",
             app.progenitors.len()
         )
     };
@@ -71,7 +71,7 @@ fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
         &app.species_filter,
         items,
         app.species_cursor,
-        app.focus == Pane::Species,
+        app.focus == Pane::Pals,
     );
 }
 
@@ -251,7 +251,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
 
         let rendered = format!("{:?}", terminal.backend().buffer());
-        assert!(rendered.contains("Species"));
+        assert!(rendered.contains("Pals"));
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
         assert!(rendered.contains("depth"));
