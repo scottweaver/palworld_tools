@@ -27,14 +27,14 @@ vendored `MinBreedingSteps` on all 89,401 pairs; upstream's 10000
 unreachable-sentinel normalized to `None` in the pal-core loader),
 and `search::find_paths` (beam-pruned multi-step search over an
 owned-pal pool, ranked by expected eggs, gender-reroll costs
-modeled). The first frontend is on `feat/tui-first-slice`: a ratatui
-TUI (species picker, ≤4-passive picker, ranked plan trees) over an
-owned pool from `pals.toml`, with the vendored data embedded in the
-binary via pal-core's new `vendored-data` feature (12 MB release
-binary, self-contained). Frontend decisions 2026-08-02: TUI first;
-**GUI stack (egui vs Tauri) deliberately deferred** until pal-gui
-work starts. 31 tests, CI now runs `--all-features`. Scope
-(binding):
+modeled). The first frontend shipped in PR #9
+(merged 2026-08-02): a ratatui TUI (species picker, ≤4-passive
+picker, ranked plan trees) over an owned pool from `pals.toml`, with
+the vendored data embedded in the binary via pal-core's
+`vendored-data` feature (12 MB release binary, self-contained).
+Frontend decisions 2026-08-02: TUI first; **GUI stack (egui vs
+Tauri) deliberately deferred** until pal-gui work starts. 31 tests,
+CI runs `--all-features`. Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
@@ -45,8 +45,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `0660a41`, CI green, 23 tests |
-| `feat/tui-first-slice` | ratatui TUI + embedded data + pals.toml | local, 31 tests green, PR pending |
+| `main` | trunk | at `8f46a70`, CI green, 31 tests |
 
 ## Next up
 
@@ -63,7 +62,8 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
-- **2026-08-02 — First frontend: ratatui TUI.** pal-tui is a real
+- **2026-08-02 — First frontend: ratatui TUI (PR #9, merged).**
+  pal-tui is a real
   calculator now: filterable species/passive pickers, F5 search,
   ranked plan trees with per-step carry annotations; owned pool from
   `pals.toml` (display-name resolution via new `PalDb::find_pal`/
