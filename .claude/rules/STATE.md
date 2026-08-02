@@ -9,28 +9,30 @@ Last updated: 2026-08-02
 
 ## Active workstream
 
-MVP build-out has started. The rules layer landed on `main`
-2026-08-02; the same day, `feat/workspace-scaffold` opened with the
-cargo workspace (pal-core / pal-solver / pal-tui / pal-gui), the
-vendored palcalc database pair (`data/db.json` + `data/breeding.json`
-@ upstream `c59712e`, v27), and pal-core's typed loader —
+MVP build-out underway. PR #1 (merged 2026-08-02) landed the cargo
+workspace (pal-core / pal-solver / pal-tui / pal-gui), the vendored
+palcalc database pair (`data/db.json` + `data/breeding.json` @
+upstream `c59712e`, v27), and pal-core's typed loader —
 version-pinned, cross-reference-checked, 3 integration tests green.
-Scope (binding): umbrella Rust toolset for Palworld — breeding
-calculator first (ported from tylercamp/palcalc's design, C#/MIT),
-then save-file tools, server admin tools, pal data website. MVP ships
-two thin frontends (TUI + desktop GUI) over shared library crates;
-pal-solver and the frontends are still empty stubs.
+The repo has no CI yet; adding the fmt/clippy/test workflow is the
+immediate next step before feature work resumes. Scope (binding):
+umbrella Rust toolset for Palworld — breeding calculator first
+(ported from tylercamp/palcalc's design, C#/MIT), then save-file
+tools, server admin tools, pal data website. MVP ships two thin
+frontends (TUI + desktop GUI) over shared library crates; pal-solver
+and the frontends are still empty stubs.
 
 ## Branches in flight
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | rules layer only (`92b6f19`) |
-| `feat/workspace-scaffold` | cargo workspace + vendored DB + pal-core loader | local, tests green, ready for PR |
+| `main` | trunk | at `a8c9193`, 3 integration tests green |
 
 ## Next up
 
-1. Open/merge the `feat/workspace-scaffold` PR.
+1. CI workflow (`.github/workflows/`): fmt + clippy `-D warnings` +
+   test gate on PRs and `main` — requested 2026-08-02, goes through
+   normal review (workflows are outside the docs carve-out).
 2. First solver slice in pal-solver: child-species lookup +
    passive-inheritance probabilities for a single breeding pair,
    parity-checked against PalCalc's output.
@@ -39,7 +41,8 @@ pal-solver and the frontends are still empty stubs.
 
 ## Most recent meaningful progress
 
-- **2026-08-02 — Workspace scaffold + vendored game DB.** Cargo
+- **2026-08-02 — Workspace scaffold + vendored game DB (PR #1,
+  merged).** Cargo
   workspace (4 crates), palcalc data pair vendored with MIT
   attribution + refresh runbook (`data/README.md`), and pal-core's
   boundary loader (newtyped model, version pin `v27`, full
