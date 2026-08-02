@@ -14,13 +14,15 @@ workspace (pal-core / pal-solver / pal-tui / pal-gui), the vendored
 palcalc database pair (`data/db.json` + `data/breeding.json` @
 upstream `c59712e`, v27), and pal-core's typed loader —
 version-pinned, cross-reference-checked, 3 integration tests green.
-PR #5 (merged 2026-08-02) landed the first solver slice:
-`ChildIndex` (male × female → child, gender-aware) and `PassiveOdds`
-(passive-inheritance probabilities ported term-for-term from
-palcalc's `Probabilities/Passives.cs` + `BreedingMechanics.cs`
-normalization), parity-tested against the vendored data and
-hand-derived vectors — 15 tests total, CI green. The single-pair
-primitives are done; multi-step path search is next. Scope (binding):
+The solver is functionally complete for the MVP core. PR #5 landed
+the single-pair primitives (`ChildIndex`, `PassiveOdds`);
+`feat/solver-path-search` adds `steps` (species reachability whose
+BFS matrix parity-matches the vendored `MinBreedingSteps` on all
+89,401 pairs — upstream's 10000 unreachable-sentinel is now
+normalized to `None` in the pal-core loader) and `search`
+(`find_paths`: beam-pruned multi-step search over an owned-pal pool,
+ranked by expected eggs, gender-reroll costs modeled). 23 tests, CI
+green. Frontends are next. Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
@@ -31,15 +33,15 @@ and the frontends are still empty stubs.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `315e104`, CI green, 15 tests |
+| `main` | trunk | at `315e104`, CI green |
+| `feat/solver-path-search` | steps + search modules (path search) | local, 23 tests green, PR pending |
 
 ## Next up
 
-1. Solver second slice: multi-step breeding-path search over an
-   owned-pal pool, building on ChildIndex + PassiveOdds (palcalc's
-   `BreedingSolver` shape).
-2. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
-   wire the first frontend to the pal-core loader.
+1. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
+   wire the first frontend to the loader + `find_paths`.
+2. Solver refinements toward palcalc parity: wild-pal sources, IV
+   inheritance, time-based effort instead of egg counts.
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -47,6 +49,17 @@ and the frontends are still empty stubs.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — Path search + reachability slice.** `pal-solver`
+  gains `steps::MinStepsTable` (BFS parity with the vendored matrix,
+  all 89,401 pairs) and `search::find_paths` (expected-eggs-ranked
+  plans; gender rerolls and passive carry-through costed per node).
+  pal-core now normalizes upstream's 10000 "unreachable" sentinel to
+  `None` at the boundary. Why: the MVP calculator core is now
+  end-to-end — pool in, ranked breeding plans out. Risk: cost model
+  is deliberately simplified vs palcalc (eggs not wall-clock, no
+  wild pals, bred parents contribute only carried passives) —
+  documented in search.rs; revisit before claiming palcalc parity in
+  the UI.
 - **2026-08-02 — First solver slice: child lookup + passive odds
   (PR #5, merged).**
   `pal-solver` gains `ChildIndex` (every ordered species pair

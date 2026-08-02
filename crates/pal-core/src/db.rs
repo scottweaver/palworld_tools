@@ -80,6 +80,12 @@ pub fn parse_pal_db(json: &str) -> Result<PalDb, ParseError> {
     ))
 }
 
+/// Upstream encodes "cannot breed one species into the other" as this
+/// sentinel in `MinBreedingSteps` (real distances top out well below
+/// it). The loader normalizes it to absence, so downstream sees
+/// `None` rather than a magic number.
+const UNREACHABLE_STEPS_SENTINEL: u32 = 10_000;
+
 /// Parses `breeding.json` content into a [`BreedingDb`], resolving
 /// every pal name against `pal_db`.
 ///
@@ -102,6 +108,7 @@ pub fn parse_breeding_db(json: &str, pal_db: &PalDb) -> Result<BreedingDb, Parse
         .map(|(from, to_steps)| {
             let to_steps = to_steps
                 .into_iter()
+                .filter(|(_, steps)| *steps < UNREACHABLE_STEPS_SENTINEL)
                 .map(|(to, steps)| Ok((known_pal(pal_db, to)?, steps)))
                 .collect::<Result<HashMap<_, _>, ParseError>>()?;
             Ok((known_pal(pal_db, from)?, to_steps))
