@@ -15,34 +15,44 @@ Last updated: 2026-08-02
 
 ## Active workstream
 
-Greenfield bootstrap. Repo, GitHub tracker bindings (PROJECT.md), and
-the rules layer landed 2026-08-02; no code yet. Scope decided: an
-umbrella Rust toolset for Palworld — breeding calculator first (MVP),
-then save-file tools, server admin tools, and a pal data website. The
-MVP ports the design (and game database) of tylercamp/palcalc (C#,
-MIT): data model ← PalCalc.Model, breeding-path solver ←
-PalCalc.Solver. MVP ships two thin frontends (ratatui TUI + desktop
-GUI) over shared library crates. First milestone: cargo workspace
-scaffold with palcalc's `db.json` ingested into a typed Rust model.
+MVP build-out has started. The rules layer landed on `main`
+2026-08-02; the same day, `feat/workspace-scaffold` opened with the
+cargo workspace (pal-core / pal-solver / pal-tui / pal-gui), the
+vendored palcalc database pair (`data/db.json` + `data/breeding.json`
+@ upstream `c59712e`, v27), and pal-core's typed loader —
+version-pinned, cross-reference-checked, 3 integration tests green.
+Scope (binding): umbrella Rust toolset for Palworld — breeding
+calculator first (ported from tylercamp/palcalc's design, C#/MIT),
+then save-file tools, server admin tools, pal data website. MVP ships
+two thin frontends (TUI + desktop GUI) over shared library crates;
+pal-solver and the frontends are still empty stubs.
 
 ## Branches in flight
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | initialized, no commits yet |
+| `main` | trunk | rules layer only (`92b6f19`) |
+| `feat/workspace-scaffold` | cargo workspace + vendored DB + pal-core loader | local, tests green, ready for PR |
 
 ## Next up
 
-1. Commit the rules layer; scaffold the cargo workspace (core +
-   solver + frontend crates).
-2. Vendor palcalc's `db.json` game database and build the typed
-   loader in the core crate.
-3. First solver slice: child-species lookup + passive-inheritance
-   probabilities for a single breeding pair, parity-checked against
-   PalCalc's output.
+1. Open/merge the `feat/workspace-scaffold` PR.
+2. First solver slice in pal-solver: child-species lookup +
+   passive-inheritance probabilities for a single breeding pair,
+   parity-checked against PalCalc's output.
+3. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
+   wire the first frontend to the pal-core loader.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — Workspace scaffold + vendored game DB.** Cargo
+  workspace (4 crates), palcalc data pair vendored with MIT
+  attribution + refresh runbook (`data/README.md`), and pal-core's
+  boundary loader (newtyped model, version pin `v27`, full
+  referential cross-checks; 3 integration tests). Why: unblocks the
+  solver — typed, trusted game data is the input to everything else.
+  Risk: db schema is upstream's; a palcalc refresh can break the
+  loader — mitigated by the version pin and loud parse errors.
 - **2026-08-02 — Rules layer bootstrapped.** PROJECT.md (GitHub
   tracker) plus METHODOLOGIES, RUST_BEST_PRACTICES, STATE,
   ARCHITECTURE, and CLAUDE.md installed; public repo

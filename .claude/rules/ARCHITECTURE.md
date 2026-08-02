@@ -17,11 +17,12 @@ existing code).
 ## Source of truth
 
 - Game data (pal species, breeding combos, passives, stats) is the
-  vendored `db.json` from tylercamp/palcalc (MIT, attribution
-  required), committed to this repo and refreshed manually on game
-  patches (2026-08-02). Everything else — the typed Rust model,
-  lookup tables, solver inputs — is derived from it at load time and
-  never hand-edited.
+  vendored database pair `data/db.json` + `data/breeding.json` from
+  tylercamp/palcalc (MIT, attribution in `data/`), committed to this
+  repo and refreshed manually on game patches — always both files
+  together, they are generated from the same game build (2026-08-02).
+  Everything else — the typed Rust model, lookup tables, solver
+  inputs — is derived from it at load time and never hand-edited.
 - User save files are external inputs only (future save-file tools):
   they are read in place, never copied into the repo. Real save
   files never become test fixtures — fixtures are synthetic or
@@ -52,9 +53,10 @@ existing code).
 
 ## External boundaries
 
-- `db.json` is the only external data artifact in the MVP; its
-  schema belongs to palcalc upstream. Treat it as a wire format: one
-  versioned loader in `pal-core` guards it, and nothing outside that
+- The vendored `data/*.json` pair is the only external data artifact
+  in the MVP; its schema belongs to palcalc upstream. Treat it as a
+  wire format: one versioned loader in `pal-core` (`db.rs`, pinned
+  via `SUPPORTED_VERSION`) guards it, and nothing outside that
   loader parses the raw JSON (2026-08-02).
 - Planned boundaries, TBD until their feature starts: Palworld
   save-file format (`pal-save`, following palworld-save-tools'
@@ -79,7 +81,7 @@ cleanup:
   dependency-DAG changes
 - `crates/pal-core/**` — the data model and the `db.json` loader are
   the schema boundary
-- `data/db.json` — vendored database refreshes
+- `data/*.json` — vendored database refreshes
 - any new directory under `crates/`
 
 ## Structural criteria
