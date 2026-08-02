@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pal-core",
+    "crates/pal-solver",
+    "crates/pal-tui",
+    "crates/pal-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/scottweaver/palworld_tools"
+
+[workspace.dependencies]
+pal-core = { path = "crates/pal-core" }
+pal-solver = { path = "crates/pal-solver" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

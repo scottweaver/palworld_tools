@@ -1,0 +1,15 @@
+[package]
+name = "pal-core"
+description = "Palworld data model and vendored game-database loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
