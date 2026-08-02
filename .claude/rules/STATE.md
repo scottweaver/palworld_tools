@@ -14,15 +14,16 @@ workspace (pal-core / pal-solver / pal-tui / pal-gui), the vendored
 palcalc database pair (`data/db.json` + `data/breeding.json` @
 upstream `c59712e`, v27), and pal-core's typed loader —
 version-pinned, cross-reference-checked, 3 integration tests green.
-The solver is functionally complete for the MVP core. PR #5 landed
-the single-pair primitives (`ChildIndex`, `PassiveOdds`);
-`feat/solver-path-search` adds `steps` (species reachability whose
-BFS matrix parity-matches the vendored `MinBreedingSteps` on all
-89,401 pairs — upstream's 10000 unreachable-sentinel is now
-normalized to `None` in the pal-core loader) and `search`
-(`find_paths`: beam-pruned multi-step search over an owned-pal pool,
-ranked by expected eggs, gender-reroll costs modeled). 23 tests, CI
-green. Frontends are next. Scope (binding):
+The solver is functionally complete for the MVP core (PRs #5 + #7,
+both merged 2026-08-02): `ChildIndex` + `PassiveOdds` single-pair
+primitives, `steps` reachability (BFS matrix parity-matches the
+vendored `MinBreedingSteps` on all 89,401 pairs; upstream's 10000
+unreachable-sentinel normalized to `None` in the pal-core loader),
+and `search::find_paths` (beam-pruned multi-step search over an
+owned-pal pool, ranked by expected eggs, gender-reroll costs
+modeled). 23 tests, CI green. Frontends are next: stack choice is an
+open dialog, then wire the first frontend to the loader +
+`find_paths`. Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
@@ -33,8 +34,7 @@ and the frontends are still empty stubs.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `315e104`, CI green |
-| `feat/solver-path-search` | steps + search modules (path search) | local, 23 tests green, PR pending |
+| `main` | trunk | at `beb921c`, CI green, 23 tests |
 
 ## Next up
 
@@ -49,7 +49,8 @@ and the frontends are still empty stubs.
 
 ## Most recent meaningful progress
 
-- **2026-08-02 — Path search + reachability slice.** `pal-solver`
+- **2026-08-02 — Path search + reachability slice (PR #7,
+  merged).** `pal-solver`
   gains `steps::MinStepsTable` (BFS parity with the vendored matrix,
   all 89,401 pairs) and `search::find_paths` (expected-eggs-ranked
   plans; gender rerolls and passive carry-through costed per node).
