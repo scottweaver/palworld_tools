@@ -1,6 +1,11 @@
-//! Breeding-path solver: given a pool of available pals and a breeding
-//! target, find efficient paths ranked by inheritance probability —
-//! the shape of palcalc's `PalCalc.Solver` (see ARCHITECTURE.md).
+//! Breeding-path solver over the pal-core model, following the shape
+//! of palcalc's `PalCalc.Solver` (see ARCHITECTURE.md).
 //!
-//! Empty scaffold; the first slice (child-species lookup for a single
-//! pair) is next up in STATE.md.
+//! Current slice: single-pair primitives — [`child`] answers which
+//! species a male × female pairing produces, [`passives`] computes
+//! passive-inheritance probabilities. Both are ported from palcalc at
+//! the same upstream commit as the vendored database and are
+//! parity-tested against it. Multi-step path search builds on these.
+
+pub mod child;
+pub mod passives;

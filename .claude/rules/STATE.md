@@ -15,8 +15,13 @@ palcalc database pair (`data/db.json` + `data/breeding.json` @
 upstream `c59712e`, v27), and pal-core's typed loader —
 version-pinned, cross-reference-checked, 3 integration tests green.
 PR #3 (merged 2026-08-02) added the CI gate: fmt + clippy
-`-D warnings` + test on every PR and on `main`, first run green in
-30s. Feature work now resumes with the solver. Scope (binding):
+`-D warnings` + test on every PR and on `main`. The first solver
+slice is on `feat/solver-child-lookup`: `ChildIndex` (male × female →
+child, gender-aware) and `PassiveOdds` (passive-inheritance
+probabilities ported term-for-term from palcalc's
+`Probabilities/Passives.cs` + `BreedingMechanics.cs` normalization),
+parity-tested against the vendored data and hand-derived vectors.
+Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
@@ -27,13 +32,14 @@ and the frontends are still empty stubs.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `ba4842f`, CI green, 3 integration tests |
+| `main` | trunk | at `ba4842f`, CI green |
+| `feat/solver-child-lookup` | ChildIndex + PassiveOdds first solver slice | local, 15 tests green, PR pending |
 
 ## Next up
 
-1. First solver slice in pal-solver: child-species lookup +
-   passive-inheritance probabilities for a single breeding pair,
-   parity-checked against PalCalc's output.
+1. Solver second slice: multi-step breeding-path search over an
+   owned-pal pool, building on ChildIndex + PassiveOdds (palcalc's
+   `BreedingSolver` shape).
 2. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
    wire the first frontend to the pal-core loader.
 3. PROJECT.md carve-out gap: docs PRs carry generated
@@ -43,6 +49,16 @@ and the frontends are still empty stubs.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — First solver slice: child lookup + passive odds.**
+  `pal-solver` gains `ChildIndex` (every ordered species pair
+  resolves; the one gendered combo, Katress × Wixen, verified per
+  arrangement) and `PassiveOdds` (upstream formula ported; validated
+  entry point sums exact-total probabilities over final counts).
+  Why: these are the two primitives every breeding-path search step
+  costs out. Risk: formula parity rests on ported math + hand-derived
+  vectors, not on running PalCalc itself — if upstream changes its
+  solver, our numbers silently diverge from theirs (acceptable: the
+  vendored data pins the game build).
 - **2026-08-02 — CI gate landed (PR #3, merged).** GitHub Actions
   workflow running fmt + clippy `-D warnings` + `cargo test
   --workspace` on every PR and `main`; first run green in 30s. Why:

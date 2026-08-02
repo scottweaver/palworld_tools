@@ -30,6 +30,10 @@ version = "0.1.0"
 [[package]]
 name = "pal-solver"
 version = "0.1.0"
+dependencies = [
+ "pal-core",
+ "thiserror",
+]
 
 [[package]]
 name = "pal-tui"
