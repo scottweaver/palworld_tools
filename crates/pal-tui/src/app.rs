@@ -38,6 +38,7 @@ pub struct App<'db> {
     pub plans: Vec<BreedingPlan>,
     pub plan_cursor: usize,
     pub max_breeding_steps: usize,
+    pub allow_wild: bool,
     pub status: String,
     pub should_quit: bool,
 }
@@ -65,6 +66,7 @@ impl<'db> App<'db> {
             plans: Vec::new(),
             plan_cursor: 0,
             max_breeding_steps: DEFAULT_BREEDING_STEPS,
+            allow_wild: true,
             status: String::new(),
             should_quit: false,
         }
@@ -118,6 +120,7 @@ impl<'db> App<'db> {
             KeyCode::Left => self.adjust_depth(-1),
             KeyCode::Right => self.adjust_depth(1),
             KeyCode::Enter => self.confirm(),
+            KeyCode::F(2) => self.toggle_wild(),
             KeyCode::F(5) => self.run_search(),
             KeyCode::Backspace => {
                 if let Some(filter) = self.active_filter() {
@@ -147,6 +150,7 @@ impl<'db> App<'db> {
         let config = SearchConfig {
             max_breeding_steps: self.max_breeding_steps,
             max_results: MAX_RESULTS,
+            allow_wild_pals: self.allow_wild,
         };
         match find_paths(self.db, self.index, self.odds, &self.owned, &goal, &config) {
             Ok(plans) => {
@@ -195,6 +199,15 @@ impl<'db> App<'db> {
             self.selected_passives.push(name);
             self.status = format!("added {display}");
         }
+    }
+
+    fn toggle_wild(&mut self) {
+        self.allow_wild = !self.allow_wild;
+        self.status = if self.allow_wild {
+            "wild pals: on — any catchable species can join plans".to_owned()
+        } else {
+            "wild pals: off — plans use only the owned pool".to_owned()
+        };
     }
 
     fn adjust_depth(&mut self, delta: isize) {
@@ -323,6 +336,25 @@ mod tests {
     }
 
     #[test]
+    fn f2_toggles_wild_mode_and_search_honors_it() {
+        let f = fixture();
+        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        assert!(app.allow_wild);
+
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.allow_wild);
+        assert!(app.status.contains("off"));
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(app.allow_wild);
+
+        // Empty pool, catchable target: wild mode finds the catch plan.
+        app.target = Some(PalName::new("SheepBall"));
+        app.run_search();
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.plans[0].steps, 0);
+    }
+
+    #[test]
     fn arrow_keys_adjust_search_depth_within_bounds() {
         let mut app = app();
         assert_eq!(app.max_breeding_steps, 3);
@@ -359,6 +391,7 @@ mod tests {
         let mut app = App::new(&f.db, &f.index, &f.odds, owned);
         // Fuack needs two generations from this pool (via Daedream).
         app.target = Some(PalName::new("BluePlatypus"));
+        app.allow_wild = false;
 
         app.max_breeding_steps = 1;
         app.run_search();
@@ -388,6 +421,7 @@ mod tests {
         ];
         let mut app = App::new(&f.db, &f.index, &f.odds, owned);
         app.target = Some(PalName::new("DreamDemon"));
+        app.allow_wild = false;
         app.run_search();
 
         assert!(!app.plans.is_empty());

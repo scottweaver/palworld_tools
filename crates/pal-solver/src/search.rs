@@ -47,13 +47,20 @@ pub struct SearchConfig {
     /// Ranked plans to return; also the per-state beam width kept
     /// during expansion.
     pub max_results: usize,
+    /// When set, every species with wild spawns
+    /// ([`pal_core::model::Pal::wild_levels`]) is available as a
+    /// free-capture leaf: any gender at zero egg cost, contributing
+    /// no passives. Capture effort itself is not yet modeled.
+    pub allow_wild_pals: bool,
 }
 
-/// One node of a finished plan: an owned pal, or a breeding step
-/// whose parents are themselves plan nodes.
+/// One node of a finished plan: an owned pal, a wild pal to catch
+/// (the pairing position implies the gender to catch), or a breeding
+/// step whose parents are themselves plan nodes.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PlanNode {
     Owned(OwnedPal),
+    Wild(PalName),
     Bred(Box<BredNode>),
 }
 
@@ -72,6 +79,7 @@ impl PlanNode {
     pub fn species(&self) -> &PalName {
         match self {
             Self::Owned(pal) => &pal.species,
+            Self::Wild(species) => species,
             Self::Bred(node) => &node.species,
         }
     }
@@ -130,6 +138,9 @@ pub fn find_paths(
         .iter()
         .map(|pal| Candidate::owned(pal, &goal.passives))
         .collect();
+    if config.allow_wild_pals {
+        working.extend(wild_candidates(pal_db, &distance_to_goal, config));
+    }
 
     for _ in 0..config.max_breeding_steps {
         let round_children = expand_round(
@@ -276,6 +287,8 @@ enum GenderAvailability {
     Fixed(Gender),
     /// A bred pal can be re-hatched to either gender at egg cost.
     Flexible { male: f64, female: f64 },
+    /// A wild pal: catch whichever gender is needed at no egg cost.
+    AnyFree,
 }
 
 #[derive(Clone, Debug)]
@@ -321,6 +334,7 @@ impl Candidate {
                 };
                 (gender_p > 0.0).then(|| self.parents_cost + 1.0 / (self.egg_p * gender_p))
             }
+            GenderAvailability::AnyFree => Some(0.0),
         }
     }
 
@@ -333,6 +347,39 @@ impl Candidate {
             self.parents_cost + 1.0 / self.egg_p
         }
     }
+}
+
+/// Free-capture candidates for every wild-spawning species that can
+/// still reach the goal, in deterministic (name) order.
+fn wild_candidates(
+    pal_db: &PalDb,
+    distance_to_goal: &HashMap<PalName, u32>,
+    config: &SearchConfig,
+) -> Vec<Candidate> {
+    let mut reachable: Vec<&pal_core::model::Pal> = pal_db
+        .pals()
+        .filter(|pal| pal.wild_levels.is_some())
+        .filter(|pal| {
+            distance_to_goal
+                .get(&pal.name)
+                .and_then(|distance| usize::try_from(*distance).ok())
+                .is_some_and(|distance| distance <= config.max_breeding_steps)
+        })
+        .collect();
+    reachable.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+    reachable
+        .into_iter()
+        .map(|pal| Candidate {
+            node: PlanNode::Wild(pal.name.clone()),
+            species: pal.name.clone(),
+            gender: GenderAvailability::AnyFree,
+            carried: DesiredMask::of(&[], &[]),
+            contribution: Vec::new(),
+            parents_cost: 0.0,
+            egg_p: 1.0,
+            bred_count: 0,
+        })
+        .collect()
 }
 
 struct BreedContext<'a> {

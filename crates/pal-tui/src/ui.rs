@@ -31,7 +31,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type to filter · Enter select/toggle · ←/→ search depth · F5 search · Esc quit",
+            "Tab panes · type to filter · Enter select/toggle · ←/→ depth · F2 wild pals · F5 search · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         help,
@@ -106,7 +106,8 @@ fn draw_filterable_list(
 }
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
-    let title = format!(" Plans — depth ≤ {} ", app.max_breeding_steps);
+    let wild = if app.allow_wild { "on" } else { "off" };
+    let title = format!(" Plans — depth ≤ {} · wild {wild} ", app.max_breeding_steps);
     let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -155,6 +156,9 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 fn plan_lines(db: &PalDb, node: &PlanNode, depth: usize, out: &mut Vec<String>) {
     let indent = "  ".repeat(depth);
     match node {
+        PlanNode::Wild(species) => {
+            out.push(format!("{indent}catch {}", display(db, species)));
+        }
         PlanNode::Owned(pal) => {
             let passives = if pal.passives.is_empty() {
                 String::new()
@@ -236,6 +240,7 @@ mod tests {
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
         assert!(rendered.contains("depth"));
+        assert!(rendered.contains("wild on"));
         assert!(rendered.contains("Lamball"));
         assert!(rendered.contains("/lamb"));
     }

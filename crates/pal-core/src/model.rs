@@ -87,6 +87,15 @@ pub struct PalId {
     pub variant: bool,
 }
 
+/// Level range at which a species spawns in the wild. Species that
+/// never spawn (raid/special forms) carry no [`WildLevels`] at all —
+/// see [`Pal::wild_levels`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct WildLevels {
+    pub min: u8,
+    pub max: u8,
+}
+
 /// Probability that a bred child of a species is male vs female.
 /// Invariant: both components lie in `[0, 1]` and sum to 1.
 #[derive(Clone, Copy, Debug)]
@@ -133,6 +142,9 @@ pub struct Pal {
     pub breeding_power_priority: u32,
     pub gender_probability: GenderProbability,
     pub guaranteed_passives: Vec<PassiveName>,
+    /// `None` when the species never spawns in the wild (raid and
+    /// special forms) — it can only be bred or otherwise granted.
+    pub wild_levels: Option<WildLevels>,
 }
 
 #[derive(Clone, Debug)]

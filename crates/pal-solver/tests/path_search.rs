@@ -60,6 +60,12 @@ fn goal(species: &str, passives: &[&str]) -> BreedingGoal {
 const CONFIG: SearchConfig = SearchConfig {
     max_breeding_steps: 3,
     max_results: 5,
+    allow_wild_pals: false,
+};
+
+const WILD_CONFIG: SearchConfig = SearchConfig {
+    allow_wild_pals: true,
+    ..CONFIG
 };
 
 #[test]
@@ -220,6 +226,92 @@ fn results_are_ranked_by_expected_eggs() {
     for window in plans.windows(2) {
         assert!(window[0].expected_eggs <= window[1].expected_eggs);
     }
+}
+
+#[test]
+fn wild_mode_offers_a_catch_plan_for_catchable_goals() {
+    let f = fixture();
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("SheepBall", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    let best = &plans[0];
+    assert_eq!(best.steps, 0);
+    assert_close(best.expected_eggs, 0.0);
+    assert_eq!(best.root, PlanNode::Wild(PalName::new("SheepBall")));
+}
+
+#[test]
+fn wild_partners_bridge_species_gaps() {
+    let f = fixture();
+    // One male Lamball and nothing else: without wilds nothing can
+    // breed; with wilds a caught partner completes the pair.
+    let pool = [owned("SheepBall", Gender::Male, &[])];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &pool,
+        &goal("DreamDemon", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    let bred = plans
+        .iter()
+        .find(|plan| plan.steps == 1)
+        .expect("a one-step plan through a wild partner");
+    let PlanNode::Bred(node) = &bred.root else {
+        panic!("expected a bred root, got {:?}", bred.root);
+    };
+    assert!(
+        matches!(node.male, PlanNode::Wild(_)) || matches!(node.female, PlanNode::Wild(_)),
+        "one parent should be a wild catch"
+    );
+}
+
+#[test]
+fn wild_pals_contribute_no_passives() {
+    let f = fixture();
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("SheepBall", &["Swift"]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+    assert!(plans.is_empty());
+}
+
+#[test]
+fn species_without_wild_spawns_are_never_caught() {
+    let f = fixture();
+    // NightLady (Bellanoir) has no wild levels in the database.
+    assert!(
+        f.pal_db
+            .pal(&PalName::new("NightLady"))
+            .unwrap()
+            .wild_levels
+            .is_none()
+    );
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("NightLady", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+    assert!(plans.iter().all(|plan| plan.steps > 0));
 }
 
 #[test]
