@@ -11,5 +11,11 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[features]
+# Embeds the vendored database pair into the crate so binaries ship
+# self-contained (see data/README.md). Off by default: library
+# consumers that load data themselves stay slim.
+vendored-data = []
+
 [lints]
 workspace = true

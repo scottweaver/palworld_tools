@@ -10,3 +10,5 @@
 
 pub mod db;
 pub mod model;
+#[cfg(feature = "vendored-data")]
+pub mod vendored;

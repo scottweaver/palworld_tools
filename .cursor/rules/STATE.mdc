@@ -27,27 +27,35 @@ vendored `MinBreedingSteps` on all 89,401 pairs; upstream's 10000
 unreachable-sentinel normalized to `None` in the pal-core loader),
 and `search::find_paths` (beam-pruned multi-step search over an
 owned-pal pool, ranked by expected eggs, gender-reroll costs
-modeled). 23 tests, CI green. Frontends are next: stack choice is an
-open dialog, then wire the first frontend to the loader +
-`find_paths`. Scope (binding):
+modeled). The first frontend is on `feat/tui-first-slice`: a ratatui
+TUI (species picker, ≤4-passive picker, ranked plan trees) over an
+owned pool from `pals.toml`, with the vendored data embedded in the
+binary via pal-core's new `vendored-data` feature (12 MB release
+binary, self-contained). Frontend decisions 2026-08-02: TUI first;
+**GUI stack (egui vs Tauri) deliberately deferred** until pal-gui
+work starts. 31 tests, CI now runs `--all-features`. Scope
+(binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
-frontends (TUI + desktop GUI) over shared library crates; pal-solver
-and the frontends are still empty stubs.
+frontends (TUI + desktop GUI) over shared library crates; pal-gui is
+the remaining stub.
 
 ## Branches in flight
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `beb921c`, CI green, 23 tests |
+| `main` | trunk | at `0660a41`, CI green, 23 tests |
+| `feat/tui-first-slice` | ratatui TUI + embedded data + pals.toml | local, 31 tests green, PR pending |
 
 ## Next up
 
-1. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
-   wire the first frontend to the loader + `find_paths`.
-2. Solver refinements toward palcalc parity: wild-pal sources, IV
-   inheritance, time-based effort instead of egg counts.
+1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
+   the TUI slice over the same library APIs.
+2. Solver refinements toward palcalc parity (wild pals, IVs,
+   time-based effort) and TUI follow-ups (in-app pool editing,
+   search-config keys, precompute `SpeciesAdjacency` once per
+   session, search off the UI thread).
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -55,6 +63,16 @@ and the frontends are still empty stubs.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — First frontend: ratatui TUI.** pal-tui is a real
+  calculator now: filterable species/passive pickers, F5 search,
+  ranked plan trees with per-step carry annotations; owned pool from
+  `pals.toml` (display-name resolution via new `PalDb::find_pal`/
+  `find_passive`); vendored data embedded behind pal-core's
+  `vendored-data` feature. CI upgraded to `--all-features`. Why:
+  proves the whole stack — loader → solver → UI — as a usable tool.
+  Risk: search runs on the UI thread and rebuilds `SpeciesAdjacency`
+  per search (~100ms release) — fine now, needs a worker thread
+  before bigger pools/steps.
 - **2026-08-02 — Path search + reachability slice (PR #7,
   merged).** `pal-solver`
   gains `steps::MinStepsTable` (BFS parity with the vendored matrix,
