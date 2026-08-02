@@ -31,7 +31,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type to filter · Enter select/toggle · ←/→ depth · F2 wild pals · F5 search · Esc quit",
+            "Tab panes · type to filter · Enter select/toggle · F4 progenitor · ←/→ depth · F2 wild · F5 search · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         help,
@@ -43,11 +43,26 @@ fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
         .target
         .as_ref()
         .map_or("none", |name| display(app.db(), name));
-    let title = format!(" Species — target: {target} ");
+    let title = if app.progenitors.is_empty() {
+        format!(" Species — target: {target} ")
+    } else {
+        format!(
+            " Species — target: {target} · progenitors: {} ",
+            app.progenitors.len()
+        )
+    };
     let rows = app.species_rows();
     let items: Vec<ListItem> = rows
         .iter()
-        .map(|pal| ListItem::new(pal.display_name.clone()))
+        .map(|pal| {
+            if app.progenitors.contains(&pal.name) {
+                ListItem::new(format!("[P] {}", pal.display_name))
+            } else if app.progenitors.is_empty() {
+                ListItem::new(pal.display_name.clone())
+            } else {
+                ListItem::new(format!("    {}", pal.display_name))
+            }
+        })
         .collect();
     draw_filterable_list(
         frame,

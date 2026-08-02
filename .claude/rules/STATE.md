@@ -41,7 +41,7 @@ the remaining stub.
 |---|---|---|
 | `main` | trunk | at `43e9035`, CI green, 31 tests |
 | `feat/tui-adjustable-steps` | ←/→ search-depth control (1–8) | PR #11 open |
-| `feat/solver-wild-pals` | wild-pal capture mode (solver + F2 toggle) | stacked on PR #11, 38 tests green |
+| `feat/solver-wild-pals` | wild-pal capture mode + progenitor picking (PR #12) | stacked on PR #11, 40 tests green |
 
 ## Next up
 
@@ -59,6 +59,14 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — Progenitor picking (the headline flow).** F4 in the
+  Species pane marks progenitor species (`[P]` rows); marks switch
+  the search to progenitor mode — plans start from a free ♂+♀ pair
+  of each marked species and nothing else (toml pool and wild
+  captures excluded, F2 overridden). This is the requested
+  progenitors → generations → descendant flow. Risk: species-level
+  progenitors carry no passives by design; passive goals in this
+  mode report guidance instead of plans.
 - **2026-08-02 — Wild-pal capture mode.** pal-core now parses
   `MinWildLevel`/`MaxWildLevel` (`Pal::wild_levels`, `None` for the
   13 raid/special forms); `find_paths` gains `allow_wild_pals`:

@@ -2,7 +2,7 @@
 //! solver API, testable without a terminal. Rendering lives in
 //! [`crate::ui`]; nothing here draws.
 
-use pal_core::model::{Pal, PalDb, PalName, PassiveName, PassiveSkill};
+use pal_core::model::{Gender, Pal, PalDb, PalName, PassiveName, PassiveSkill};
 use pal_solver::child::ChildIndex;
 use pal_solver::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
 use pal_solver::search::{BreedingGoal, BreedingPlan, OwnedPal, SearchConfig, find_paths};
@@ -32,6 +32,11 @@ pub struct App<'db> {
     pub species_filter: String,
     pub species_cursor: usize,
     pub target: Option<PalName>,
+    /// Progenitor species marked in the Species pane. Non-empty marks
+    /// switch the search to progenitor mode: plans start from a free
+    /// male + female pair of each marked species and nothing else —
+    /// the toml pool and wild captures stay out.
+    pub progenitors: Vec<PalName>,
     pub passive_filter: String,
     pub passive_cursor: usize,
     pub selected_passives: Vec<PassiveName>,
@@ -60,6 +65,7 @@ impl<'db> App<'db> {
             species_filter: String::new(),
             species_cursor: 0,
             target: None,
+            progenitors: Vec::new(),
             passive_filter: String::new(),
             passive_cursor: 0,
             selected_passives: Vec::new(),
@@ -121,6 +127,7 @@ impl<'db> App<'db> {
             KeyCode::Right => self.adjust_depth(1),
             KeyCode::Enter => self.confirm(),
             KeyCode::F(2) => self.toggle_wild(),
+            KeyCode::F(4) => self.toggle_progenitor(),
             KeyCode::F(5) => self.run_search(),
             KeyCode::Backspace => {
                 if let Some(filter) = self.active_filter() {
@@ -147,17 +154,35 @@ impl<'db> App<'db> {
             species: target,
             passives: self.selected_passives.clone(),
         };
+        let progenitor_mode = !self.progenitors.is_empty();
+        let pool = if progenitor_mode {
+            progenitor_pool(&self.progenitors)
+        } else {
+            self.owned.clone()
+        };
         let config = SearchConfig {
             max_breeding_steps: self.max_breeding_steps,
             max_results: MAX_RESULTS,
-            allow_wild_pals: self.allow_wild,
+            allow_wild_pals: self.allow_wild && !progenitor_mode,
         };
-        match find_paths(self.db, self.index, self.odds, &self.owned, &goal, &config) {
+        match find_paths(self.db, self.index, self.odds, &pool, &goal, &config) {
             Ok(plans) => {
                 self.status = if plans.is_empty() {
+                    if progenitor_mode && !self.selected_passives.is_empty() {
+                        "no plans — species progenitors carry no passives; \
+                         deselect passives or plan from pals.toml"
+                            .to_owned()
+                    } else {
+                        format!(
+                            "no plans within {} step(s) — raise the depth with → or check the pool",
+                            self.max_breeding_steps
+                        )
+                    }
+                } else if progenitor_mode {
                     format!(
-                        "no plans within {} step(s) — raise the depth with → or check the owned pool",
-                        self.max_breeding_steps
+                        "{} plan(s) from {} progenitor species",
+                        plans.len(),
+                        self.progenitors.len()
                     )
                 } else {
                     format!("{} plan(s) found", plans.len())
@@ -198,6 +223,26 @@ impl<'db> App<'db> {
         } else {
             self.selected_passives.push(name);
             self.status = format!("added {display}");
+        }
+    }
+
+    fn toggle_progenitor(&mut self) {
+        if self.focus != Pane::Species {
+            return;
+        }
+        let Some(pal) = self.species_rows().get(self.species_cursor).copied() else {
+            return;
+        };
+        if let Some(position) = self.progenitors.iter().position(|p| *p == pal.name) {
+            self.progenitors.remove(position);
+            self.status = format!("progenitor removed: {}", pal.display_name);
+        } else {
+            self.progenitors.push(pal.name.clone());
+            self.status = format!(
+                "progenitor added: {} — plans will start from the {} marked species only",
+                pal.display_name,
+                self.progenitors.len()
+            );
         }
     }
 
@@ -250,6 +295,21 @@ impl<'db> App<'db> {
             Pane::Results => {}
         }
     }
+}
+
+/// A free male + female pair per marked species: "I will obtain a
+/// breeding pair of each of these" is the progenitor-mode premise.
+fn progenitor_pool(progenitors: &[PalName]) -> Vec<OwnedPal> {
+    progenitors
+        .iter()
+        .flat_map(|species| {
+            [Gender::Male, Gender::Female].map(|gender| OwnedPal {
+                species: species.clone(),
+                gender,
+                passives: Vec::new(),
+            })
+        })
+        .collect()
 }
 
 fn matches_filter(filter: &str, display_name: &str, internal_name: &str) -> bool {
@@ -333,6 +393,73 @@ mod tests {
         app.handle_key(key(KeyCode::F(5)));
         assert!(app.plans.is_empty());
         assert!(app.status.contains("target"));
+    }
+
+    #[test]
+    fn f4_marks_progenitors_and_search_starts_from_them_only() {
+        let f = fixture();
+        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+
+        for c in "lamball".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::F(4)));
+        assert_eq!(app.progenitors, vec![PalName::new("SheepBall")]);
+
+        app.species_filter.clear();
+        for c in "cattiva".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::F(4)));
+        assert_eq!(app.progenitors.len(), 2);
+
+        // Wild mode stays on, but progenitor marks must override it:
+        // plans may only start from the two marked species.
+        assert!(app.allow_wild);
+        app.target = Some(PalName::new("BluePlatypus"));
+        app.run_search();
+
+        assert!(!app.plans.is_empty());
+        let best = &app.plans[0];
+        assert_eq!(best.steps, 2);
+        let mut leaves = Vec::new();
+        collect_leaf_species(&best.root, &mut leaves);
+        for species in leaves {
+            assert!(
+                species == PalName::new("SheepBall") || species == PalName::new("PinkCat"),
+                "unexpected leaf species {species}"
+            );
+        }
+        assert!(app.status.contains("2 progenitor species"));
+
+        // Unmarking returns to pool planning.
+        app.focus = Pane::Species;
+        app.handle_key(key(KeyCode::F(4)));
+        assert_eq!(app.progenitors.len(), 1);
+    }
+
+    #[test]
+    fn progenitor_mode_reports_that_passives_need_the_pool() {
+        let f = fixture();
+        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
+        app.target = Some(PalName::new("DreamDemon"));
+        app.selected_passives = vec![PassiveName::new("Swift")];
+        app.run_search();
+
+        assert!(app.plans.is_empty());
+        assert!(app.status.contains("carry no passives"));
+    }
+
+    fn collect_leaf_species(node: &pal_solver::search::PlanNode, out: &mut Vec<PalName>) {
+        match node {
+            pal_solver::search::PlanNode::Owned(pal) => out.push(pal.species.clone()),
+            pal_solver::search::PlanNode::Wild(species) => out.push(species.clone()),
+            pal_solver::search::PlanNode::Bred(bred) => {
+                collect_leaf_species(&bred.male, out);
+                collect_leaf_species(&bred.female, out);
+            }
+        }
     }
 
     #[test]
