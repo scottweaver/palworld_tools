@@ -1,0 +1,104 @@
+# Architecture constraints
+
+Decided, binding architecture facts. STATE.md answers "what is in
+flight"; this file answers "what must remain true." Every constraint
+here was decided in a design dialog or by a hard external fact — a
+change to any of them is a design decision requiring its own dialog
+and a PR that updates this file in the same change (see
+METHODOLOGIES.md "Refactors that change documented architecture").
+
+The intuition: STATE.md is a working artifact you update aggressively;
+this file is a contract you update deliberately.
+
+Established 2026-08-02 (bootstrap dialog; project is greenfield, so
+several constraints describe the decided target shape rather than
+existing code).
+
+## Source of truth
+
+- Game data (pal species, breeding combos, passives, stats) is the
+  vendored `db.json` from tylercamp/palcalc (MIT, attribution
+  required), committed to this repo and refreshed manually on game
+  patches (2026-08-02). Everything else — the typed Rust model,
+  lookup tables, solver inputs — is derived from it at load time and
+  never hand-edited.
+- User save files are external inputs only (future save-file tools):
+  they are read in place, never copied into the repo. Real save
+  files never become test fixtures — fixtures are synthetic or
+  scrubbed (2026-08-02).
+
+## Crate layering
+
+- The project is a cargo workspace (2026-08-02). Dependency DAG:
+  frontends (`pal-tui`, `pal-gui`) → `pal-solver` → `pal-core`;
+  `pal-core` depends on no workspace crate. Future feature crates
+  (`pal-save`, `pal-server`, `pal-web`) sit beside `pal-solver` and
+  depend only on `pal-core` unless a dialog decides otherwise.
+- Frontends are thin (2026-08-02): no breeding, probability, or
+  game-data logic in `pal-tui`/`pal-gui`. The MVP ships both, so any
+  logic one frontend needs, the other needs — it lives in a library
+  crate.
+- `pal-solver` performs no I/O and knows nothing about presentation
+  (2026-08-02): it consumes `pal-core` types and returns result
+  types; loading `db.json` or a save file is the caller's job.
+
+## Data flow / pipeline shape
+
+- MVP pipeline (2026-08-02): `db.json` → `pal-core` typed model →
+  `pal-solver` breeding-path search (PalCalc's shape: owned / wild /
+  bred pal references, paths ranked by inheritance-probability
+  efficiency, not step count) → frontend presentation. Each phase
+  sees only the previous phase's public types.
+
+## External boundaries
+
+- `db.json` is the only external data artifact in the MVP; its
+  schema belongs to palcalc upstream. Treat it as a wire format: one
+  versioned loader in `pal-core` guards it, and nothing outside that
+  loader parses the raw JSON (2026-08-02).
+- Planned boundaries, TBD until their feature starts: Palworld
+  save-file format (`pal-save`, following palworld-save-tools'
+  approach), dedicated-server REST/RCON (`pal-server`), website HTTP
+  surface (`pal-web`). Opening any of these is structural (below).
+
+## Security and identity
+
+- The MVP holds no credentials. Future server-admin tooling gets
+  server addresses/passwords from environment variables per the
+  global secrets policy (`~/.secrets/`, sourced into env) — never
+  from files in this repo (2026-08-02).
+- Save files can embed player/guild identity; they are treated as
+  private user data (see Source of truth: never committed).
+
+## Audit triggers
+
+Files whose changes warrant re-checking this doc during post-merge
+cleanup:
+
+- `Cargo.toml` (workspace root) and `crates/*/Cargo.toml` —
+  dependency-DAG changes
+- `crates/pal-core/**` — the data model and the `db.json` loader are
+  the schema boundary
+- `data/db.json` — vendored database refreshes
+- any new directory under `crates/`
+
+## Structural criteria
+
+Structural (this doc must change in the same PR): a new workspace
+crate or any change to the allowed dependency direction; changing
+the game-data source (vendored `db.json` → own extractor or a
+community API); opening a planned external boundary (save parsing,
+server API, website); moving solver/game-data logic into a frontend
+crate.
+
+Not structural (no update needed): new solver strategies or
+heuristics behind an unchanged `pal-solver` API; TUI/GUI feature
+work; test and bench changes; `db.json` refreshes that keep the
+schema.
+
+## Maintenance
+
+Update when a constraint above is deliberately renegotiated (design
+dialog + PR updating this file), or when a recorded TBD is resolved.
+Never for in-flight status — that's STATE.md. Keep constraints
+falsifiable and dated. Secrets never enter this doc.

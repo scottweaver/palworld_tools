@@ -1,0 +1,73 @@
+# Project State
+
+The rehydration document. Any agent starting a session reads this
+first to learn where the project stands right now. It answers "where
+are we" — never "how does this work" (that's ARCHITECTURE.md and the
+code) and never "how should we work" (that's METHODOLOGIES.md).
+
+Last updated: 2026-08-02
+
+## Active workstream
+
+Greenfield bootstrap. Repo, GitHub tracker bindings (PROJECT.md), and
+the rules layer landed 2026-08-02; no code yet. Scope decided: an
+umbrella Rust toolset for Palworld — breeding calculator first (MVP),
+then save-file tools, server admin tools, and a pal data website. The
+MVP ports the design (and game database) of tylercamp/palcalc (C#,
+MIT): data model ← PalCalc.Model, breeding-path solver ←
+PalCalc.Solver. MVP ships two thin frontends (ratatui TUI + desktop
+GUI) over shared library crates. First milestone: cargo workspace
+scaffold with palcalc's `db.json` ingested into a typed Rust model.
+
+## Branches in flight
+
+| Branch | Purpose | Status |
+|---|---|---|
+| `main` | trunk | initialized, no commits yet |
+
+## Next up
+
+1. Commit the rules layer; scaffold the cargo workspace (core +
+   solver + frontend crates).
+2. Vendor palcalc's `db.json` game database and build the typed
+   loader in the core crate.
+3. First solver slice: child-species lookup + passive-inheritance
+   probabilities for a single breeding pair, parity-checked against
+   PalCalc's output.
+
+## Most recent meaningful progress
+
+- **2026-08-02 — Rules layer bootstrapped.** PROJECT.md (GitHub
+  tracker) plus METHODOLOGIES, RUST_BEST_PRACTICES, STATE,
+  ARCHITECTURE, and CLAUDE.md installed; public repo
+  `scottweaver/palworld_tools` created. Why: portable skills and
+  agent rehydration work from day one. Risk: architecture constraints
+  are young — expect renegotiation as the MVP solidifies.
+
+## Blocked / waiting
+
+- *(nothing)*
+
+## Maintenance
+
+- **Refresh trigger:** any merge or milestone that changes what an
+  incoming agent needs to know: workstream shifts, a branch opens or
+  closes, "Next up" changes, something lands. Wired into
+  METHODOLOGIES.md's post-merge routine (the "refresh STATE.md"
+  step).
+- **Always update:** "Last updated"; "Branches in flight"; prepend a
+  progress entry (what / why / risk voice — a judgment edit, not a
+  paste of the PR description).
+- **As applicable:** "Active workstream" paragraph, "Next up",
+  "Blocked / waiting".
+- **Trim policy:** progress log holds at most 10 entries — drop the
+  oldest when adding. Anything stable graduates out of this file
+  into the appropriate rules doc; this file stays small because
+  every agent loads it every turn.
+- **Edit policy:** STATE.md is authored on feature branches,
+  propagates through merges, and is refreshed (not deleted) on new
+  branches. Never edit it directly on `main`; docs-only diffs under
+  `.claude/rules/` ride the METHODOLOGIES.md docs-only carve-out.
+- **Keep entries short:** each progress entry is a pointer — date,
+  PR #, ticket, a sentence or two of judgment. If you're tempted to
+  write more, the detail belongs in the PR, commit, or ticket.

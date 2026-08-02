@@ -1,0 +1,390 @@
+# Rust conventions
+
+Conventions for Rust code in this project. For workflow (branching,
+PRs, refactors) see METHODOLOGIES.md.
+
+These are constraints, not suggestions. "Liberties constrain,
+constraints liberate" — the tighter the rules, the less time is spent
+re-deciding the same questions and the more consistent the codebase
+becomes. When a rule below conflicts with a quick-and-natural way of
+writing something, the rule wins.
+
+The overall posture: lean extremely hard into the type system, and
+prefer functional style — values in, values out, immutability by
+default, effects at the edges. Rust rewards both; this codebase demands
+both.
+
+## Type discipline
+
+The type system is the design surface. Code in this project is Rust
+that happens to compile because the design was expressed in types
+first, not Rust that was beaten into compiling.
+
+### Types come first, implementation follows.
+
+When writing a new function or module, the type signatures are written
+first — inputs, outputs, intermediate shapes, error enums — and the
+implementation is constrained to fit them. The signatures are the
+design; if they are awkward or imprecise, the implementation will be
+too.
+
+A signature like `fn apply(input: &str, opts: Value) -> Value` is a
+non-design and is not acceptable. A signature like
+`fn apply(doc: &Document, op: SignedOp) -> Result<Applied, ApplyError>`
+is a design the implementation must live up to.
+
+### Illegal states are unrepresentable.
+
+If two fields can never be set at the same time, the type does not
+allow them to be set at the same time. If a value goes through phases
+(received → decoded → validated → applied), each phase is its own type.
+If a function only makes sense after some validation has happened, it
+takes the validated type, not the raw one.
+
+The test: by reading the type alone, can you tell what state the value
+is in? If no, the type is doing less than it must.
+
+`enum`s are the primary tool. This shape:
+
+```rust
+enum Delivery {
+    Pending { queued_at: Timestamp },
+    Sent { queued_at: Timestamp, sent_at: Timestamp },
+    Acked { sent_at: Timestamp, acked_at: Timestamp, by: WorkerId },
+}
+```
+
+is correct. This shape:
+
+```rust
+struct Delivery {
+    queued_at: Option<Timestamp>,
+    sent_at: Option<Timestamp>,
+    acked_at: Option<Timestamp>,
+    by: Option<WorkerId>,
+    state: String,
+}
+```
+
+is not. The first form is checkable: a function that takes the payload
+of `Delivery::Acked` cannot be handed an un-acked delivery. The second
+form is documentation in field names and prayer at runtime. A struct
+whose fields are mostly `Option<T>` is an enum that hasn't been
+admitted yet.
+
+### Every `match` on our own enums is exhaustive — no `_` arm.
+
+A wildcard arm on one of our own enums silently absorbs every variant
+added later. The compiler's exhaustiveness check is the single
+cheapest correctness tool Rust gives us, and a `_` arm turns it off.
+
+```rust
+// Correct — adding a variant to Op breaks this at compile time:
+match op {
+    Op::Insert(ins) => apply_insert(doc, ins),
+    Op::Delete(del) => apply_delete(doc, del),
+    Op::Retag(rt) => apply_retag(doc, rt),
+}
+
+// Not this — a future Op::Move silently falls into the sink:
+match op {
+    Op::Insert(ins) => apply_insert(doc, ins),
+    _ => Ok(Applied::noop()),
+}
+```
+
+Silently absorbing unknown variants is among the worst classes of bug:
+wrong behavior that looks right. This rule has no exceptions for our
+own types.
+
+For *foreign* enums marked `#[non_exhaustive]`, a `_` arm is forced by
+the compiler — keep it, and make it loud (return an error or log),
+never a silent no-op. Conversely, our own public enums that cross a
+public API boundary may be `#[non_exhaustive]` so external consumers
+are forced to handle growth; inside the workspace we still match
+exhaustively.
+
+### Identifier-shaped values are newtypes.
+
+If two values are both `String` (or both `u64`) but mean different
+things — a user id and an order id, a byte offset and a sequence
+number, a display name and a canonical key — the compiler cannot help
+when they get swapped. They get newtypes.
+
+```rust
+pub struct UserId(Ulid);
+pub struct OrderId(Ulid);
+pub struct ByteOffset(u64);
+pub struct SeqNo(u64);
+```
+
+New identifier domains get new newtypes. The cost is one smart
+constructor where the value is born; the benefit is the compiler
+refuses to let `(user, order)` be called with arguments swapped.
+
+The constructor is where the format invariant lives — a `parse`
+function is the only place the grammar is checked, and a typed value
+in hand is proof the check passed. Fields stay private; construction
+goes through the constructor or not at all.
+
+Derive deliberately: `Clone, Copy (when cheap), PartialEq, Eq, Hash,
+Debug` are the usual set; add `PartialOrd/Ord` only when ordering is
+meaningful in the domain (it is for `SeqNo`; it is not for `UserId`).
+
+### Wide types are not allowed.
+
+`String` is almost never the right type. If the value is one of a known
+set, it is an enum. If it is a name in a domain, it is a newtype. If it
+is unvalidated input, it stays in a raw/boundary type until parsing
+refines it.
+
+Same for integers. `u64` is rarely the right type — `SeqNo`,
+`ByteOffset`, `RetryCount` carry meaning that `u64` does not, and
+arithmetic that mixes them is almost always a bug the newtype prevents.
+Every `String`, `u64`, or `bool` in a signature is examined to see if
+something more specific is meant. It usually is. (Two `bool` parameters
+in a row is an enum asking to exist.)
+
+### Parse, don't validate.
+
+Data crossing any boundary — the wire, disk, a plugin, an editor
+extension, an AI agent — arrives as bytes or a raw decoded form and is
+*parsed into a typed value once*, at the boundary. Downstream code
+takes the typed value and never re-checks it.
+
+`TryFrom<RawFrame> for Envelope` (or an equivalent `parse` function
+returning `Result`) is the boundary's contract. A function that takes
+`Envelope` needs no defensive checks; the type is the proof. Validation
+that returns `bool` and leaves the data in its raw type is not
+parsing — it forces every downstream function to trust a check it
+cannot see.
+
+### Protocols are encoded in types.
+
+When code goes through a sequence of operations that must happen in a
+specific order — handshake before frames, decode before apply, begin
+before commit — the sequence is encoded in the types (typestate):
+consuming `self` and returning the next state's type.
+
+```rust
+impl Handshake {
+    pub fn accept(self, hello: Hello) -> Result<Session, HandshakeError> { ... }
+}
+impl Session {
+    pub fn send(&mut self, frame: Frame) -> Result<(), SendError> { ... }
+}
+```
+
+A caller cannot `send` before `accept` succeeds — there is no `Session`
+to call it on. This is harder than one struct with a `state` field and
+runtime checks, but the compiler then enforces the protocol — and a
+compiler-enforced protocol is the only kind that survives long-term.
+
+### Type relationships are expressed in the type system.
+
+When two types are related (an op and its inverse, a request and its
+response, a key set and a value lookup), the relationship is expressed
+with generics, traits with associated types, or `From`/`TryFrom` impls
+rather than being written out twice and hoped to stay in sync:
+
+```rust
+pub trait Command {
+    type Response;
+    type Error;
+}
+```
+
+The bar for adding genuine complexity here (higher-ranked bounds, deep
+generic towers, macro-generated impls) is high — they earn their place
+only when the alternative is bug-prone manual duplication. The simple
+forms (plain generics, associated types, `From` impls) are the default.
+
+## Functional style
+
+### Pure core, effectful shell.
+
+The core logic — state transitions, validation, encode/decode,
+business rules — is pure functions: values in, values out, no IO, no
+clocks, no randomness, no global state. Time, entropy, network, and
+disk are passed in as values or injected at the edges. This is what
+makes the core trivially testable (property tests, fuzzing, replay)
+and its behavior deterministic.
+
+IO lives in a thin shell (network tasks, storage tasks) that calls into
+the pure core. Async belongs to the shell; the core is sync and knows
+nothing about executors.
+
+### Immutability is the default. `mut` is opt-in, local, and invisible from outside.
+
+Bindings are immutable unless mutation is the point. A `&mut`
+parameter is a signal to examine: transformation passes take `&self` /
+values and *return new values* (or explicit edit descriptions), they
+do not mutate shared structures in place. Local mutation inside a
+function — a counter, a buffer being filled before return — is fine;
+locality is the qualifier.
+
+Shared mutable state (`Rc<RefCell<T>>`, `Arc<Mutex<T>>` used as a
+grab-bag context) is how ordering bugs and deadlocks get in. When two
+components need to coordinate, prefer messages (channels) or returned
+values over a shared lock. An `Arc<Mutex<T>>` is acceptable only for
+genuinely shared caches/registries with tiny critical sections —
+never as a way to thread "the context" through the system.
+
+### Expressions over statements.
+
+Rust is expression-oriented; use it. `let x = if cond { a } else { b };`
+over declare-then-assign. `match` as an expression over a mutable
+accumulator. A function body that is one expression pipeline reads as
+its own specification.
+
+### Iterators over index loops.
+
+`map`/`filter`/`fold`/`collect` chains state intent; `for i in
+0..len` states mechanics. Use combinators when the operation is a
+per-element transformation; use a `for` loop when there is early exit
+with side conditions, or the combinator chain stops fitting in a
+glance. A chain that has grown a five-line closure with its own `let`s
+wants to be a named function or a loop.
+
+`Iterator` combinators returning `Result` compose with `collect::<
+Result<Vec<_>, _>>()` — use that instead of a loop that pushes and
+manually tracks the first error.
+
+### Data and functions, not object hierarchies.
+
+Types are data (`struct`, `enum`); behavior is functions and traits.
+Traits are contracts for *capability polymorphism* (a storage backend,
+a transport, a plugin surface), not a way to simulate inheritance —
+no `Deref`-based method inheritance, no base-struct-with-common-fields
+patterns. Prefer plain functions over traits until there is a second
+implementation or a genuine seam (plugins, tests) that needs one.
+
+Prefer `enum` + exhaustive `match` for *closed* sets we own (op kinds,
+protocol frames); prefer `dyn Trait` / generics for *open* sets others
+extend (plugins). Choosing between them is a design decision — make it
+explicitly, per type.
+
+## Error handling
+
+### Errors are values returned, not panics thrown.
+
+Anything that can fail recoverably returns `Result<T, E>` with a
+purpose-built error enum (`thiserror` for the derive). Error enums are
+part of the API design and get the same type-first treatment: a caller
+should be able to `match` on the failure and do something different
+per variant, or the variants are wrong.
+
+`panic!`, `unwrap`, and friends are reserved for **defects** —
+invariants believed unviolable. A panic is a statement that this
+situation is a bug, not a runtime condition the caller should handle.
+In practice:
+
+- Library/core crates: no `unwrap`/`expect` on values that depend on
+  external input, ever. `expect("...")` is permitted only for
+  provable-locally invariants, and the message states the invariant
+  ("lock poisoned only if a writer panicked"), not the failure.
+- `unwrap()` in tests is fine; tests are supposed to panic on broken
+  assumptions.
+- `anyhow`/`eyre`-style dynamic errors are allowed only in binaries at
+  the very top of the call stack, never in library crates.
+
+Never use `Result` where the failure is impossible by construction —
+that's what the type discipline above is for — and never use panic
+where the failure is real. Both directions of the mistake cost.
+
+### Boundaries validate; the interior trusts.
+
+Anything arriving from outside the process — wire frames, persisted
+state, plugin messages, editor RPC — is parsed and validated exactly
+once at the boundary (see "Parse, don't validate"). After the boundary,
+the types are trusted: no defensive re-checking, no
+`debug_assert!`-as-documentation scattered through the interior.
+
+## Ownership and API shape
+
+- Take the least you need: `&str` over `&String` over `String`;
+  `&[T]` over `&Vec<T>`; `impl Iterator<Item = T>` over building a
+  `Vec` just to pass it. Take ownership when the function
+  semantically consumes the value (stores it, sends it, transforms it
+  into the return).
+- A `.clone()` inserted to satisfy the borrow checker is a design
+  smell — restructure the flow (split the borrow, return the value,
+  move the computation) before reaching for it. Cheap `Copy` newtypes
+  are exempt; cloning an `Arc` is explicit sharing and fine.
+- Return owned values from constructors and transformations; return
+  borrows only for accessors.
+- Lifetimes in public APIs are kept simple. If a signature needs three
+  named lifetimes to express, the ownership design is wrong, not the
+  annotation.
+
+## Comments
+
+Comments explain **why**, not **what** — the code and the identifier
+names already say what. A comment earns its place by anchoring to an
+invariant, a precondition, or a non-obvious constraint the reader can't
+recover from the diff.
+
+**An inline comment is a smell.** When a block of code needs a comment
+to explain what it does, extract it into a function whose name states
+the intent — the name is the documentation. If the code's purpose is
+already obvious, delete the comment. Order of preference: **rename,
+extract, delete, comment** — comment last, kept to one or two lines,
+and only for a *why* the code genuinely can't express (an invariant, a
+protocol quirk, an external-tool bug being worked around).
+
+**The deletion test — apply it to every comment, existing or new.**
+Would deleting this comment lose something a competent reader cannot
+recover from the code, the identifier names, the nearby docs, and the
+tests? If no, delete it. Most comments that survive a lazy first pass
+are a WHAT wearing a WHY costume.
+
+A comment is noise — delete it — when a test already guards the
+behavior, when the fact is stated elsewhere (crate docs, type docs),
+when it narrates control flow, or when it labels a section (extract
+the section into a named function instead).
+
+Rustdoc discipline: public items that form the API surface get `///`
+docs stating the contract (inputs, invariants, errors) — that is API
+documentation, not commentary, and it is held to the same why-not-what
+standard. Struct fields: all or none, preferring none — fold the one
+non-obvious field invariant into the type's top-level doc rather than
+scattering per-field docs.
+
+Tests document themselves through their names and assertion shape —
+no preamble comment blocks. Tracker IDs live in commits, PRs, and
+project state, never in code comments or test names.
+
+## What this codebase does not do
+
+Patterns from broader Rust practice that are not used here, listed so
+nobody reaches for them by default:
+
+- **`unwrap()`-driven development.** Every `unwrap` outside tests is
+  reviewed as a probable bug.
+- **Stringly-typed APIs.** Raw `String` ids, `&str` type tags, JSON
+  `Value` passed through core logic. Parse into types at the boundary.
+- **Struct-of-`Option`s state machines.** That's an enum.
+- **Wildcard `match` arms on our own enums.** Exhaustiveness is the
+  point.
+- **Inheritance simulation.** No `Deref` polymorphism, no base
+  structs. Composition and traits-as-contracts only.
+- **Shared mutable context objects.** No `Rc<RefCell<World>>` /
+  `Arc<Mutex<Everything>>` threading through the system. Values flow
+  through signatures, where they are visible.
+- **Panics for control flow.** Errors are values.
+- **Premature `async` in the core.** The core is pure and sync; only
+  the IO shell is async.
+- **Macro-heavy cleverness.** A declarative macro to kill real
+  duplication is fine; proc-macros and macro DSLs need a strong,
+  argued case.
+
+## Tooling floor
+
+- `cargo fmt` with default settings; formatting is not a discussion.
+- `cargo clippy --all-targets -- -D warnings` must pass. Clippy's
+  `pedantic` group is enabled crate-level with specific, documented
+  `allow`s where it misfires — an `#[allow]` without a one-line reason
+  is a review flag.
+- Public API surfaces build with `#![deny(missing_docs)]` once the
+  crate stabilizes; internal crates start with it off, API-surface
+  crates start with it on.
