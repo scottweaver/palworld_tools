@@ -30,8 +30,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_results(frame, app, results);
     frame.render_widget(Paragraph::new(app.status.as_str()), status);
     frame.render_widget(
-        Paragraph::new("Tab panes · type to filter · Enter select/toggle · F5 search · Esc quit")
-            .style(Style::new().add_modifier(Modifier::DIM)),
+        Paragraph::new(
+            "Tab panes · type to filter · Enter select/toggle · ←/→ search depth · F5 search · Esc quit",
+        )
+        .style(Style::new().add_modifier(Modifier::DIM)),
         help,
     );
 }
@@ -104,7 +106,8 @@ fn draw_filterable_list(
 }
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
-    let block = pane_block(" Plans ", app.focus == Pane::Results);
+    let title = format!(" Plans — depth ≤ {} ", app.max_breeding_steps);
+    let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [list_area, detail_area] =
@@ -232,6 +235,7 @@ mod tests {
         assert!(rendered.contains("Species"));
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
+        assert!(rendered.contains("depth"));
         assert!(rendered.contains("Lamball"));
         assert!(rendered.contains("/lamb"));
     }

@@ -53,8 +53,8 @@ the remaining stub.
    the TUI slice over the same library APIs.
 2. Solver refinements toward palcalc parity (wild pals, IVs,
    time-based effort) and TUI follow-ups (in-app pool editing,
-   search-config keys, precompute `SpeciesAdjacency` once per
-   session, search off the UI thread).
+   precompute `SpeciesAdjacency` once per session, search off the UI
+   thread — matters more now that depth is user-adjustable).
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -62,6 +62,12 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — TUI search depth adjustable.** ←/→ set
+  `max_breeding_steps` (1–8, shown in the Plans title; 8 = data max
+  species distance 7 + passive-consolidation headroom). Why: deep
+  progenitor→descendant chains were capped at a hard-coded 3. Risk:
+  depth 7–8 searches on the UI thread can stall on big pools —
+  worker-thread item queued in next-up.
 - **2026-08-02 — First frontend: ratatui TUI (PR #9, merged).**
   pal-tui is a real
   calculator now: filterable species/passive pickers, F5 search,
