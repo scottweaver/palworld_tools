@@ -1,0 +1,336 @@
+//! Application state and key handling — pure transitions over the
+//! solver API, testable without a terminal. Rendering lives in
+//! [`crate::ui`]; nothing here draws.
+
+use pal_core::model::{Pal, PalDb, PalName, PassiveName, PassiveSkill};
+use pal_solver::child::ChildIndex;
+use pal_solver::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
+use pal_solver::search::{BreedingGoal, BreedingPlan, OwnedPal, SearchConfig, find_paths};
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
+
+const SEARCH_CONFIG: SearchConfig = SearchConfig {
+    max_breeding_steps: 3,
+    max_results: 5,
+};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pane {
+    Species,
+    Passives,
+    Results,
+}
+
+pub struct App<'db> {
+    db: &'db PalDb,
+    index: &'db ChildIndex,
+    odds: &'db PassiveOdds,
+    pub owned: Vec<OwnedPal>,
+    pub focus: Pane,
+    pub species_filter: String,
+    pub species_cursor: usize,
+    pub target: Option<PalName>,
+    pub passive_filter: String,
+    pub passive_cursor: usize,
+    pub selected_passives: Vec<PassiveName>,
+    pub plans: Vec<BreedingPlan>,
+    pub plan_cursor: usize,
+    pub status: String,
+    pub should_quit: bool,
+}
+
+impl<'db> App<'db> {
+    #[must_use]
+    pub fn new(
+        db: &'db PalDb,
+        index: &'db ChildIndex,
+        odds: &'db PassiveOdds,
+        owned: Vec<OwnedPal>,
+    ) -> Self {
+        Self {
+            db,
+            index,
+            odds,
+            owned,
+            focus: Pane::Species,
+            species_filter: String::new(),
+            species_cursor: 0,
+            target: None,
+            passive_filter: String::new(),
+            passive_cursor: 0,
+            selected_passives: Vec::new(),
+            plans: Vec::new(),
+            plan_cursor: 0,
+            status: String::new(),
+            should_quit: false,
+        }
+    }
+
+    #[must_use]
+    pub fn db(&self) -> &'db PalDb {
+        self.db
+    }
+
+    /// Species matching the filter, sorted by display name.
+    #[must_use]
+    pub fn species_rows(&self) -> Vec<&'db Pal> {
+        let mut rows: Vec<&Pal> = self
+            .db
+            .pals()
+            .filter(|pal| {
+                matches_filter(&self.species_filter, &pal.display_name, pal.name.as_str())
+            })
+            .collect();
+        rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        rows
+    }
+
+    /// Standard passives matching the filter, sorted by display name.
+    #[must_use]
+    pub fn passive_rows(&self) -> Vec<&'db PassiveSkill> {
+        let mut rows: Vec<&PassiveSkill> = self
+            .db
+            .passives()
+            .filter(|skill| skill.standard)
+            .filter(|skill| {
+                matches_filter(
+                    &self.passive_filter,
+                    &skill.display_name,
+                    skill.name.as_str(),
+                )
+            })
+            .collect();
+        rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        rows
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.should_quit = true,
+            KeyCode::Tab => self.focus = next_pane(self.focus),
+            KeyCode::BackTab => self.focus = next_pane(next_pane(self.focus)),
+            KeyCode::Up => self.move_cursor(-1),
+            KeyCode::Down => self.move_cursor(1),
+            KeyCode::Enter => self.confirm(),
+            KeyCode::F(5) => self.run_search(),
+            KeyCode::Backspace => {
+                if let Some(filter) = self.active_filter() {
+                    filter.pop();
+                    self.reset_cursor();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(filter) = self.active_filter() {
+                    filter.push(c);
+                    self.reset_cursor();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn run_search(&mut self) {
+        let Some(target) = self.target.clone() else {
+            "pick a target species first (Enter in the Species pane)".clone_into(&mut self.status);
+            return;
+        };
+        let goal = BreedingGoal {
+            species: target,
+            passives: self.selected_passives.clone(),
+        };
+        match find_paths(
+            self.db,
+            self.index,
+            self.odds,
+            &self.owned,
+            &goal,
+            &SEARCH_CONFIG,
+        ) {
+            Ok(plans) => {
+                self.status = if plans.is_empty() {
+                    format!(
+                        "no plans within {} steps — check the owned pool",
+                        SEARCH_CONFIG.max_breeding_steps
+                    )
+                } else {
+                    format!("{} plan(s) found", plans.len())
+                };
+                self.plans = plans;
+                self.plan_cursor = 0;
+                if !self.plans.is_empty() {
+                    self.focus = Pane::Results;
+                }
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    fn confirm(&mut self) {
+        match self.focus {
+            Pane::Species => {
+                if let Some(pal) = self.species_rows().get(self.species_cursor).copied() {
+                    self.target = Some(pal.name.clone());
+                    self.status = format!("target: {}", pal.display_name);
+                }
+            }
+            Pane::Passives => {
+                if let Some(skill) = self.passive_rows().get(self.passive_cursor).copied() {
+                    self.toggle_passive(skill.name.clone(), &skill.display_name);
+                }
+            }
+            Pane::Results => self.run_search(),
+        }
+    }
+
+    fn toggle_passive(&mut self, name: PassiveName, display: &str) {
+        if let Some(position) = self.selected_passives.iter().position(|p| *p == name) {
+            self.selected_passives.remove(position);
+            self.status = format!("dropped {display}");
+        } else if self.selected_passives.len() == MAX_TOTAL_PASSIVES {
+            self.status = format!("a pal carries at most {MAX_TOTAL_PASSIVES} passives");
+        } else {
+            self.selected_passives.push(name);
+            self.status = format!("added {display}");
+        }
+    }
+
+    fn move_cursor(&mut self, delta: isize) {
+        let len = match self.focus {
+            Pane::Species => self.species_rows().len(),
+            Pane::Passives => self.passive_rows().len(),
+            Pane::Results => self.plans.len(),
+        };
+        let cursor = match self.focus {
+            Pane::Species => &mut self.species_cursor,
+            Pane::Passives => &mut self.passive_cursor,
+            Pane::Results => &mut self.plan_cursor,
+        };
+        *cursor = step(*cursor, delta, len);
+    }
+
+    fn active_filter(&mut self) -> Option<&mut String> {
+        match self.focus {
+            Pane::Species => Some(&mut self.species_filter),
+            Pane::Passives => Some(&mut self.passive_filter),
+            Pane::Results => None,
+        }
+    }
+
+    fn reset_cursor(&mut self) {
+        match self.focus {
+            Pane::Species => self.species_cursor = 0,
+            Pane::Passives => self.passive_cursor = 0,
+            Pane::Results => {}
+        }
+    }
+}
+
+fn matches_filter(filter: &str, display_name: &str, internal_name: &str) -> bool {
+    filter.is_empty()
+        || display_name
+            .to_ascii_lowercase()
+            .contains(&filter.to_ascii_lowercase())
+        || internal_name
+            .to_ascii_lowercase()
+            .contains(&filter.to_ascii_lowercase())
+}
+
+fn next_pane(pane: Pane) -> Pane {
+    match pane {
+        Pane::Species => Pane::Passives,
+        Pane::Passives => Pane::Results,
+        Pane::Results => Pane::Species,
+    }
+}
+
+fn step(cursor: usize, delta: isize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let moved = cursor.saturating_add_signed(delta);
+    moved.min(len - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::fixture;
+    use pal_core::model::Gender;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::from(code)
+    }
+
+    fn app() -> App<'static> {
+        let f = fixture();
+        App::new(&f.db, &f.index, &f.odds, Vec::new())
+    }
+
+    #[test]
+    fn typing_filters_the_species_list_and_enter_selects_the_target() {
+        let mut app = app();
+        for c in "lamball".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        let rows = app.species_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].display_name, "Lamball");
+
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.target, Some(PalName::new("SheepBall")));
+    }
+
+    #[test]
+    fn passive_selection_caps_at_four() {
+        let mut app = app();
+        app.focus = Pane::Passives;
+        let names: Vec<PassiveName> = app
+            .passive_rows()
+            .iter()
+            .take(5)
+            .map(|skill| skill.name.clone())
+            .collect();
+        assert!(names.len() == 5, "expected at least 5 standard passives");
+        for position in 0..names.len() {
+            app.passive_cursor = position;
+            app.handle_key(key(KeyCode::Enter));
+        }
+        assert_eq!(app.selected_passives.len(), 4);
+        assert!(!app.selected_passives.contains(&names[4]));
+        assert!(app.status.contains("at most"));
+    }
+
+    #[test]
+    fn search_without_a_target_reports_instead_of_running() {
+        let mut app = app();
+        app.handle_key(key(KeyCode::F(5)));
+        assert!(app.plans.is_empty());
+        assert!(app.status.contains("target"));
+    }
+
+    #[test]
+    fn search_returns_ranked_plans_and_focuses_results() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(&f.db, &f.index, &f.odds, owned);
+        app.target = Some(PalName::new("DreamDemon"));
+        app.run_search();
+
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.plans[0].steps, 1);
+        assert_eq!(app.focus, Pane::Results);
+        for window in app.plans.windows(2) {
+            assert!(window[0].expected_eggs <= window[1].expected_eggs);
+        }
+    }
+}

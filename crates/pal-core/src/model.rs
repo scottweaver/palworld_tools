@@ -210,6 +210,26 @@ impl PalDb {
         self.pals.get(name)
     }
 
+    /// Case-insensitive lookup by internal or display name — the
+    /// resolution step for user-facing input (config files, search
+    /// boxes).
+    #[must_use]
+    pub fn find_pal(&self, name: &str) -> Option<&Pal> {
+        self.pals.values().find(|pal| {
+            pal.name.as_str().eq_ignore_ascii_case(name)
+                || pal.display_name.eq_ignore_ascii_case(name)
+        })
+    }
+
+    /// Case-insensitive passive lookup by internal or display name.
+    #[must_use]
+    pub fn find_passive(&self, name: &str) -> Option<&PassiveSkill> {
+        self.passives.values().find(|skill| {
+            skill.name.as_str().eq_ignore_ascii_case(name)
+                || skill.display_name.eq_ignore_ascii_case(name)
+        })
+    }
+
     pub fn pals(&self) -> impl Iterator<Item = &Pal> {
         self.pals.values()
     }
