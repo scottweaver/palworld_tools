@@ -266,6 +266,9 @@ impl BreedingDb {
         &self.combos
     }
 
+    /// Minimum breeding steps from `from` to `to`; `None` when `to`
+    /// cannot be bred into from `from` (the loader normalizes
+    /// upstream's unreachable sentinel to absence).
     #[must_use]
     pub fn min_steps(&self, from: &PalName, to: &PalName) -> Option<u32> {
         self.min_steps.get(from)?.get(to).copied()
