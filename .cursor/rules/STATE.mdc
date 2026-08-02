@@ -20,8 +20,9 @@ workspace (pal-core / pal-solver / pal-tui / pal-gui), the vendored
 palcalc database pair (`data/db.json` + `data/breeding.json` @
 upstream `c59712e`, v27), and pal-core's typed loader —
 version-pinned, cross-reference-checked, 3 integration tests green.
-The repo has no CI yet; adding the fmt/clippy/test workflow is the
-immediate next step before feature work resumes. Scope (binding):
+PR #3 (merged 2026-08-02) added the CI gate: fmt + clippy
+`-D warnings` + test on every PR and on `main`, first run green in
+30s. Feature work now resumes with the solver. Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
 tools, server admin tools, pal data website. MVP ships two thin
@@ -32,21 +33,28 @@ and the frontends are still empty stubs.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `a8c9193`, 3 integration tests green |
+| `main` | trunk | at `ba4842f`, CI green, 3 integration tests |
 
 ## Next up
 
-1. CI workflow (`.github/workflows/`): fmt + clippy `-D warnings` +
-   test gate on PRs and `main` — requested 2026-08-02, goes through
-   normal review (workflows are outside the docs carve-out).
-2. First solver slice in pal-solver: child-species lookup +
+1. First solver slice in pal-solver: child-species lookup +
    passive-inheritance probabilities for a single breeding pair,
    parity-checked against PalCalc's output.
-3. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
+2. Choose the TUI/GUI stacks (ratatui; egui vs Tauri — dialog) and
    wire the first frontend to the pal-core loader.
+3. PROJECT.md carve-out gap: docs PRs carry generated
+   `.cursor/rules/*.mdc` mirrors, which sit outside the
+   `.claude/rules/` auto-merge carve-out — extend the binding or
+   exclude mirrors (flagged during PR #1 wrap-up).
 
 ## Most recent meaningful progress
 
+- **2026-08-02 — CI gate landed (PR #3, merged).** GitHub Actions
+  workflow running fmt + clippy `-D warnings` + `cargo test
+  --workspace` on every PR and `main`; first run green in 30s. Why:
+  the docs auto-merge carve-out and every future PR now have a real
+  gate instead of a vacuous one. Risk: none noted — mirrors the
+  local tooling floor exactly.
 - **2026-08-02 — Workspace scaffold + vendored game DB (PR #1,
   merged).** Cargo
   workspace (4 crates), palcalc data pair vendored with MIT
