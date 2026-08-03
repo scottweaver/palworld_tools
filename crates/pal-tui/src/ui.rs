@@ -294,7 +294,7 @@ mod tests {
         }));
 
         assert_eq!(
-            plan_tree(&f.db, &plan),
+            plan_tree(f.db, &plan),
             vec![
                 "🥚 Fuack · hatch for Swift".to_owned(),
                 "├─ ♂ 🎒 Lamball · Swift".to_owned(),
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn draws_all_panes_without_panicking() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
         app.species_filter = "lamb".to_owned();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();

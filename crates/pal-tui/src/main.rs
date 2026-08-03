@@ -9,6 +9,7 @@ mod ui;
 use anyhow::{Context, Result};
 use pal_solver::child::ChildIndex;
 use pal_solver::passives::PassiveOdds;
+use pal_solver::search::Solver;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
@@ -24,6 +25,7 @@ fn main() -> Result<()> {
         pal_core::vendored::breeding_db(&db).context("parsing the embedded breeding.json")?;
     let index = ChildIndex::build(&breeding).context("building the child index")?;
     let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
+    let solver = Solver::new(&db, &index, &odds);
 
     let (owned, pool_status) = match std::fs::read_to_string(&pals_path) {
         Ok(text) => {
@@ -37,7 +39,7 @@ fn main() -> Result<()> {
         ),
     };
 
-    let mut app = App::new(&db, &index, &odds, owned);
+    let mut app = App::new(&solver, owned);
     app.status = pool_status;
 
     let mut terminal = ratatui::init();
@@ -65,21 +67,33 @@ mod test_support {
     use pal_core::model::PalDb;
     use pal_solver::child::ChildIndex;
     use pal_solver::passives::PassiveOdds;
+    use pal_solver::search::Solver;
 
-    pub struct Fixture {
-        pub db: PalDb,
-        pub index: ChildIndex,
-        pub odds: PassiveOdds,
+    struct Data {
+        db: PalDb,
+        index: ChildIndex,
+        odds: PassiveOdds,
     }
 
-    pub fn fixture() -> &'static Fixture {
-        static FIXTURE: OnceLock<Fixture> = OnceLock::new();
-        FIXTURE.get_or_init(|| {
+    pub struct Fixture {
+        pub db: &'static PalDb,
+        pub solver: &'static Solver<'static>,
+    }
+
+    pub fn fixture() -> Fixture {
+        static DATA: OnceLock<Data> = OnceLock::new();
+        static SOLVER: OnceLock<Solver<'static>> = OnceLock::new();
+        let data = DATA.get_or_init(|| {
             let db = pal_core::vendored::pal_db().unwrap();
             let breeding = pal_core::vendored::breeding_db(&db).unwrap();
             let index = ChildIndex::build(&breeding).unwrap();
             let odds = PassiveOdds::from_mechanics(db.mechanics()).unwrap();
-            Fixture { db, index, odds }
-        })
+            Data { db, index, odds }
+        });
+        let solver = SOLVER.get_or_init(|| Solver::new(&data.db, &data.index, &data.odds));
+        Fixture {
+            db: &data.db,
+            solver,
+        }
     }
 }

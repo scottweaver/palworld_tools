@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 pal-core.workspace = true
+rayon = "1.12.0"
 thiserror.workspace = true
 
 [lints]

@@ -51,9 +51,8 @@ the remaining stub.
    the TUI slice over the same library APIs.
 2. Solver refinements toward palcalc parity (IVs, time-based effort,
    capture-effort costing for wild pals) and TUI follow-ups (in-app
-   pool editing, precompute `SpeciesAdjacency` once per session,
-   search off the UI thread — matters more now that depth is
-   user-adjustable and wild mode widens the candidate set).
+   pool editing; search off the UI thread — worst-case searches are
+   ~2s now, enough to warrant a worker for responsiveness).
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -61,6 +60,18 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Search rewritten for speed.** `Solver` struct
+  (adjacency precomputed once, per-goal distance memo); append-only
+  record arena (plan trees materialized only for results, never
+  cloned mid-search); frontier expansion (only pairs touching a
+  candidate added last round); species-group-first pair enumeration
+  with group-level child/reachability rejection; rayon across
+  groups. Depth-6 × 3-progenitor × wild went from unfinishable in
+  10+ minutes to ~1.8s (perf.rs, ignored test). Why: user-reported
+  stalls at high depth/multiple progenitors. Risk: frontier
+  expansion relies on beam costs only improving over rounds —
+  documented in search.rs; semantics pinned by the unchanged
+  47-test suite.
 - **2026-08-03 — Progenitor picking (the headline flow), fixed to
   anchor semantics (PR #13, merged).** F4 in the Pals pane marks progenitors (`[P]`
   rows, pinned to the top; Del clears all). Marks are required
