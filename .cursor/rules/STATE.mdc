@@ -65,14 +65,16 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
-- **2026-08-02 — Progenitor picking (the headline flow).** F4 in the
-  Species pane marks progenitor species (`[P]` rows); marks switch
-  the search to progenitor mode — plans start from a free ♂+♀ pair
-  of each marked species and nothing else (toml pool and wild
-  captures excluded, F2 overridden). This is the requested
-  progenitors → generations → descendant flow. Risk: species-level
-  progenitors carry no passives by design; passive goals in this
-  mode report guidance instead of plans.
+- **2026-08-03 — Progenitor picking (the headline flow), fixed to
+  anchor semantics.** F4 in the Pals pane marks progenitors (`[P]`
+  rows, pinned to the top; Del clears all). Marks are required
+  anchors: every plan must include each marked pal, with wild
+  partners recruited around them (`BreedingGoal.progenitors` +
+  required-bitmask beam state in the solver). First cut wrongly used
+  a closed pool — Anubis→Knocklem found nothing; both user examples
+  are now verbatim tests. Plans render as a family tree (box-drawing
+  + emoji leaf tags). Risk: progenitors carry no passives by design;
+  passive goals in this mode report guidance instead of plans.
 - **2026-08-02 — Wild-pal capture mode.** pal-core now parses
   `MinWildLevel`/`MaxWildLevel` (`Pal::wild_levels`, `None` for the
   13 raid/special forms); `find_paths` gains `allow_wild_pals`:
