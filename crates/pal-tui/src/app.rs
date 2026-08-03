@@ -8,10 +8,13 @@ use pal_solver::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
 use pal_solver::search::{BreedingGoal, BreedingPlan, OwnedPal, SearchConfig, find_paths};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-const SEARCH_CONFIG: SearchConfig = SearchConfig {
-    max_breeding_steps: 3,
-    max_results: 5,
-};
+const MAX_RESULTS: usize = 5;
+const DEFAULT_BREEDING_STEPS: usize = 3;
+pub const MIN_BREEDING_STEPS: usize = 1;
+/// Species reach never needs more than 7 steps (the vendored
+/// min-steps matrix tops out there); one extra for passive
+/// consolidation. Deeper searches also get slow on the UI thread.
+pub const MAX_BREEDING_STEPS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
@@ -34,6 +37,7 @@ pub struct App<'db> {
     pub selected_passives: Vec<PassiveName>,
     pub plans: Vec<BreedingPlan>,
     pub plan_cursor: usize,
+    pub max_breeding_steps: usize,
     pub status: String,
     pub should_quit: bool,
 }
@@ -60,6 +64,7 @@ impl<'db> App<'db> {
             selected_passives: Vec::new(),
             plans: Vec::new(),
             plan_cursor: 0,
+            max_breeding_steps: DEFAULT_BREEDING_STEPS,
             status: String::new(),
             should_quit: false,
         }
@@ -110,6 +115,8 @@ impl<'db> App<'db> {
             KeyCode::BackTab => self.focus = next_pane(next_pane(self.focus)),
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
+            KeyCode::Left => self.adjust_depth(-1),
+            KeyCode::Right => self.adjust_depth(1),
             KeyCode::Enter => self.confirm(),
             KeyCode::F(5) => self.run_search(),
             KeyCode::Backspace => {
@@ -137,19 +144,16 @@ impl<'db> App<'db> {
             species: target,
             passives: self.selected_passives.clone(),
         };
-        match find_paths(
-            self.db,
-            self.index,
-            self.odds,
-            &self.owned,
-            &goal,
-            &SEARCH_CONFIG,
-        ) {
+        let config = SearchConfig {
+            max_breeding_steps: self.max_breeding_steps,
+            max_results: MAX_RESULTS,
+        };
+        match find_paths(self.db, self.index, self.odds, &self.owned, &goal, &config) {
             Ok(plans) => {
                 self.status = if plans.is_empty() {
                     format!(
-                        "no plans within {} steps — check the owned pool",
-                        SEARCH_CONFIG.max_breeding_steps
+                        "no plans within {} step(s) — raise the depth with → or check the owned pool",
+                        self.max_breeding_steps
                     )
                 } else {
                     format!("{} plan(s) found", plans.len())
@@ -191,6 +195,17 @@ impl<'db> App<'db> {
             self.selected_passives.push(name);
             self.status = format!("added {display}");
         }
+    }
+
+    fn adjust_depth(&mut self, delta: isize) {
+        self.max_breeding_steps = self
+            .max_breeding_steps
+            .saturating_add_signed(delta)
+            .clamp(MIN_BREEDING_STEPS, MAX_BREEDING_STEPS);
+        self.status = format!(
+            "search depth: up to {} breeding step(s)",
+            self.max_breeding_steps
+        );
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -305,6 +320,55 @@ mod tests {
         app.handle_key(key(KeyCode::F(5)));
         assert!(app.plans.is_empty());
         assert!(app.status.contains("target"));
+    }
+
+    #[test]
+    fn arrow_keys_adjust_search_depth_within_bounds() {
+        let mut app = app();
+        assert_eq!(app.max_breeding_steps, 3);
+
+        app.handle_key(key(KeyCode::Right));
+        assert_eq!(app.max_breeding_steps, 4);
+        assert!(app.status.contains("4 breeding step"));
+
+        for _ in 0..20 {
+            app.handle_key(key(KeyCode::Left));
+        }
+        assert_eq!(app.max_breeding_steps, MIN_BREEDING_STEPS);
+        for _ in 0..20 {
+            app.handle_key(key(KeyCode::Right));
+        }
+        assert_eq!(app.max_breeding_steps, MAX_BREEDING_STEPS);
+    }
+
+    #[test]
+    fn search_depth_gates_which_targets_are_reachable() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(&f.db, &f.index, &f.odds, owned);
+        // Fuack needs two generations from this pool (via Daedream).
+        app.target = Some(PalName::new("BluePlatypus"));
+
+        app.max_breeding_steps = 1;
+        app.run_search();
+        assert!(app.plans.is_empty());
+        assert!(app.status.contains("within 1 step"));
+
+        app.max_breeding_steps = 2;
+        app.run_search();
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.plans[0].steps, 2);
     }
 
     #[test]
