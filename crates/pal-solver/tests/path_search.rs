@@ -54,12 +54,38 @@ fn goal(species: &str, passives: &[&str]) -> BreedingGoal {
     BreedingGoal {
         species: PalName::new(species),
         passives: passives.iter().copied().map(PassiveName::new).collect(),
+        progenitors: Vec::new(),
+    }
+}
+
+fn goal_from(species: &str, progenitors: &[&str]) -> BreedingGoal {
+    BreedingGoal {
+        species: PalName::new(species),
+        passives: Vec::new(),
+        progenitors: progenitors.iter().copied().map(PalName::new).collect(),
+    }
+}
+
+fn progenitor_leaves(node: &PlanNode, out: &mut Vec<PalName>) {
+    match node {
+        PlanNode::Progenitor(species) => out.push(species.clone()),
+        PlanNode::Owned(_) | PlanNode::Wild(_) => {}
+        PlanNode::Bred(bred) => {
+            progenitor_leaves(&bred.male, out);
+            progenitor_leaves(&bred.female, out);
+        }
     }
 }
 
 const CONFIG: SearchConfig = SearchConfig {
     max_breeding_steps: 3,
     max_results: 5,
+    allow_wild_pals: false,
+};
+
+const WILD_CONFIG: SearchConfig = SearchConfig {
+    allow_wild_pals: true,
+    ..CONFIG
 };
 
 #[test]
@@ -220,6 +246,204 @@ fn results_are_ranked_by_expected_eggs() {
     for window in plans.windows(2) {
         assert!(window[0].expected_eggs <= window[1].expected_eggs);
     }
+}
+
+#[test]
+fn progenitor_anubis_reaches_knocklem_in_one_step() {
+    let f = fixture();
+    // Anubis × Aegidron -> Knocklem (WingGolem) per the vendored data.
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal_from("WingGolem", &["Anubis"]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    assert!(!plans.is_empty());
+    let best = &plans[0];
+    assert_eq!(best.steps, 1);
+    for plan in &plans {
+        let mut anchors = Vec::new();
+        progenitor_leaves(&plan.root, &mut anchors);
+        assert!(anchors.contains(&PalName::new("Anubis")), "unanchored plan");
+        assert!(plan.steps > 0, "free catch plan crowded in");
+    }
+}
+
+#[test]
+fn progenitor_azurmane_reaches_knocklem() {
+    let f = fixture();
+    // The user-expected route is Azurmane × Astegon -> Anubis, then
+    // Anubis × Aegidron -> Knocklem; the data also holds direct
+    // one-step partners, which must rank first.
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal_from("WingGolem", &["BlueThunderHorse"]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    assert!(!plans.is_empty());
+    assert_eq!(plans[0].steps, 1);
+    let mut anchors = Vec::new();
+    progenitor_leaves(&plans[0].root, &mut anchors);
+    assert_eq!(anchors, vec![PalName::new("BlueThunderHorse")]);
+}
+
+#[test]
+fn every_plan_includes_all_required_progenitors() {
+    let f = fixture();
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal_from("BluePlatypus", &["SheepBall", "PinkCat"]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    assert!(!plans.is_empty());
+    for plan in &plans {
+        let mut anchors = Vec::new();
+        progenitor_leaves(&plan.root, &mut anchors);
+        assert!(anchors.contains(&PalName::new("SheepBall")));
+        assert!(anchors.contains(&PalName::new("PinkCat")));
+    }
+}
+
+#[test]
+fn progenitor_validation_rejects_bad_inputs() {
+    let f = fixture();
+    assert_eq!(
+        find_paths(
+            &f.pal_db,
+            &f.index,
+            &f.odds,
+            &[],
+            &goal_from("WingGolem", &["NotAPal"]),
+            &WILD_CONFIG
+        )
+        .unwrap_err(),
+        SearchError::UnknownProgenitor(PalName::new("NotAPal"))
+    );
+    assert_eq!(
+        find_paths(
+            &f.pal_db,
+            &f.index,
+            &f.odds,
+            &[],
+            &goal_from("WingGolem", &["Anubis", "Anubis"]),
+            &WILD_CONFIG
+        )
+        .unwrap_err(),
+        SearchError::DuplicateProgenitor(PalName::new("Anubis"))
+    );
+    let nine: Vec<&str> = vec!["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+    assert_eq!(
+        find_paths(
+            &f.pal_db,
+            &f.index,
+            &f.odds,
+            &[],
+            &goal_from("WingGolem", &nine),
+            &WILD_CONFIG
+        )
+        .unwrap_err(),
+        SearchError::TooManyProgenitors { count: 9 }
+    );
+}
+
+#[test]
+fn wild_mode_offers_a_catch_plan_for_catchable_goals() {
+    let f = fixture();
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("SheepBall", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    let best = &plans[0];
+    assert_eq!(best.steps, 0);
+    assert_close(best.expected_eggs, 0.0);
+    assert_eq!(best.root, PlanNode::Wild(PalName::new("SheepBall")));
+}
+
+#[test]
+fn wild_partners_bridge_species_gaps() {
+    let f = fixture();
+    // One male Lamball and nothing else: without wilds nothing can
+    // breed; with wilds a caught partner completes the pair.
+    let pool = [owned("SheepBall", Gender::Male, &[])];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &pool,
+        &goal("DreamDemon", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+
+    let bred = plans
+        .iter()
+        .find(|plan| plan.steps == 1)
+        .expect("a one-step plan through a wild partner");
+    let PlanNode::Bred(node) = &bred.root else {
+        panic!("expected a bred root, got {:?}", bred.root);
+    };
+    assert!(
+        matches!(node.male, PlanNode::Wild(_)) || matches!(node.female, PlanNode::Wild(_)),
+        "one parent should be a wild catch"
+    );
+}
+
+#[test]
+fn wild_pals_contribute_no_passives() {
+    let f = fixture();
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("SheepBall", &["Swift"]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+    assert!(plans.is_empty());
+}
+
+#[test]
+fn species_without_wild_spawns_are_never_caught() {
+    let f = fixture();
+    // NightLady (Bellanoir) has no wild levels in the database.
+    assert!(
+        f.pal_db
+            .pal(&PalName::new("NightLady"))
+            .unwrap()
+            .wild_levels
+            .is_none()
+    );
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &[],
+        &goal("NightLady", &[]),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+    assert!(plans.iter().all(|plan| plan.steps > 0));
 }
 
 #[test]

@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::model::{
     BreedingCombo, BreedingDb, BreedingMechanics, BreedingParent, DbVersion, Gender,
     GenderProbability, InvalidGenderProbability, Pal, PalDb, PalId, PalName, ParentGender,
-    PassiveName, PassiveSkill,
+    PassiveName, PassiveSkill, WildLevels,
 };
 
 /// The palcalc database version this loader understands. Bump together
@@ -38,6 +38,8 @@ pub enum ParseError {
     UnknownPassive { pal: String, passive: String },
     #[error("breeding entry references pal {name} absent from the pal database")]
     UnknownPal { name: String },
+    #[error("pal {pal} has only one of MinWildLevel/MaxWildLevel set")]
+    MismatchedWildLevels { pal: String },
 }
 
 /// Parses `db.json` content into a [`PalDb`].
@@ -148,6 +150,8 @@ struct RawPal {
     breeding_power: u32,
     breeding_power_priority: u32,
     guaranteed_passives_internal_ids: Vec<String>,
+    min_wild_level: Option<u8>,
+    max_wild_level: Option<u8>,
 }
 
 impl RawPal {
@@ -184,6 +188,16 @@ impl RawPal {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let wild_levels = match (self.min_wild_level, self.max_wild_level) {
+            (Some(min), Some(max)) => Some(WildLevels { min, max }),
+            (None, None) => None,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(ParseError::MismatchedWildLevels {
+                    pal: self.internal_name.clone(),
+                });
+            }
+        };
+
         Ok(Pal {
             id: PalId {
                 dex: self.id.pal_dex_no,
@@ -195,6 +209,7 @@ impl RawPal {
             breeding_power_priority: self.breeding_power_priority,
             gender_probability,
             guaranteed_passives,
+            wild_levels,
         })
     }
 }

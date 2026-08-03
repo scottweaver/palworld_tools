@@ -45,16 +45,19 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `8f46a70`, CI green, 31 tests |
+| `main` | trunk | at `43e9035`, CI green, 31 tests |
+| `feat/tui-adjustable-steps` | ←/→ search-depth control (1–8) | PR #11 open |
+| `feat/solver-wild-pals` | wild-pal capture mode + progenitor picking (PR #12) | stacked on PR #11, 40 tests green |
 
 ## Next up
 
 1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs.
-2. Solver refinements toward palcalc parity (wild pals, IVs,
-   time-based effort) and TUI follow-ups (in-app pool editing,
-   precompute `SpeciesAdjacency` once per session, search off the UI
-   thread — matters more now that depth is user-adjustable).
+2. Solver refinements toward palcalc parity (IVs, time-based effort,
+   capture-effort costing for wild pals) and TUI follow-ups (in-app
+   pool editing, precompute `SpeciesAdjacency` once per session,
+   search off the UI thread — matters more now that depth is
+   user-adjustable and wild mode widens the candidate set).
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -62,6 +65,25 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Progenitor picking (the headline flow), fixed to
+  anchor semantics.** F4 in the Pals pane marks progenitors (`[P]`
+  rows, pinned to the top; Del clears all). Marks are required
+  anchors: every plan must include each marked pal, with wild
+  partners recruited around them (`BreedingGoal.progenitors` +
+  required-bitmask beam state in the solver). First cut wrongly used
+  a closed pool — Anubis→Knocklem found nothing; both user examples
+  are now verbatim tests. Plans render as a family tree (box-drawing
+  + emoji leaf tags). Risk: progenitors carry no passives by design;
+  passive goals in this mode report guidance instead of plans.
+- **2026-08-02 — Wild-pal capture mode.** pal-core now parses
+  `MinWildLevel`/`MaxWildLevel` (`Pal::wild_levels`, `None` for the
+  13 raid/special forms); `find_paths` gains `allow_wild_pals`:
+  wild-spawning species join as free-capture leaves (any gender,
+  zero eggs, no passives), so plans read "catch X" where useful; TUI
+  toggles it with F2 (default on). Why: progenitor→target planning
+  no longer limited to the toml pool — owned pals supply passives,
+  wilds bridge species. Risk: capture effort is unmodeled, so
+  wild-heavy plans look free; palcalc-style time costing queued.
 - **2026-08-02 — TUI search depth adjustable.** ←/→ set
   `max_breeding_steps` (1–8, shown in the Plans title; 8 = data max
   species distance 7 + passive-consolidation headroom). Why: deep
