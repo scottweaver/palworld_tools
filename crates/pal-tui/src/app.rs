@@ -3,10 +3,9 @@
 //! [`crate::ui`]; nothing here draws.
 
 use pal_core::model::{Pal, PalDb, PalName, PassiveName, PassiveSkill};
-use pal_solver::child::ChildIndex;
-use pal_solver::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
+use pal_solver::passives::MAX_TOTAL_PASSIVES;
 use pal_solver::search::{
-    BreedingGoal, BreedingPlan, MAX_PROGENITORS, OwnedPal, SearchConfig, find_paths,
+    BreedingGoal, BreedingPlan, MAX_PROGENITORS, OwnedPal, SearchConfig, Solver,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -26,9 +25,7 @@ pub enum Pane {
 }
 
 pub struct App<'db> {
-    db: &'db PalDb,
-    index: &'db ChildIndex,
-    odds: &'db PassiveOdds,
+    solver: &'db Solver<'db>,
     pub owned: Vec<OwnedPal>,
     pub focus: Pane,
     pub species_filter: String,
@@ -52,16 +49,9 @@ pub struct App<'db> {
 
 impl<'db> App<'db> {
     #[must_use]
-    pub fn new(
-        db: &'db PalDb,
-        index: &'db ChildIndex,
-        odds: &'db PassiveOdds,
-        owned: Vec<OwnedPal>,
-    ) -> Self {
+    pub fn new(solver: &'db Solver<'db>, owned: Vec<OwnedPal>) -> Self {
         Self {
-            db,
-            index,
-            odds,
+            solver,
             owned,
             focus: Pane::Pals,
             species_filter: String::new(),
@@ -82,7 +72,7 @@ impl<'db> App<'db> {
 
     #[must_use]
     pub fn db(&self) -> &'db PalDb {
-        self.db
+        self.solver.pal_db()
     }
 
     /// Rows for the Pals pane: marked progenitors pinned at the top
@@ -94,10 +84,10 @@ impl<'db> App<'db> {
         let pinned: Vec<&Pal> = self
             .progenitors
             .iter()
-            .filter_map(|name| self.db.pal(name))
+            .filter_map(|name| self.db().pal(name))
             .collect();
         let mut rest: Vec<&Pal> = self
-            .db
+            .db()
             .pals()
             .filter(|pal| !self.progenitors.contains(&pal.name))
             .filter(|pal| {
@@ -114,7 +104,7 @@ impl<'db> App<'db> {
     #[must_use]
     pub fn passive_rows(&self) -> Vec<&'db PassiveSkill> {
         let mut rows: Vec<&PassiveSkill> = self
-            .db
+            .db()
             .passives()
             .filter(|skill| skill.standard)
             .filter(|skill| {
@@ -182,7 +172,7 @@ impl<'db> App<'db> {
             // are the only source once the toml pool steps aside.
             allow_wild_pals: self.allow_wild || progenitor_mode,
         };
-        match find_paths(self.db, self.index, self.odds, &pool, &goal, &config) {
+        match self.solver.find_paths(&pool, &goal, &config) {
             Ok(plans) => {
                 self.status = if plans.is_empty() {
                     if progenitor_mode && !self.selected_passives.is_empty() {
@@ -363,7 +353,7 @@ mod tests {
 
     fn app() -> App<'static> {
         let f = fixture();
-        App::new(&f.db, &f.index, &f.odds, Vec::new())
+        App::new(f.solver, Vec::new())
     }
 
     #[test]
@@ -411,7 +401,7 @@ mod tests {
     #[test]
     fn f4_marks_progenitors_and_search_starts_from_them_only() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
 
         for c in "lamball".chars() {
             app.handle_key(key(KeyCode::Char(c)));
@@ -452,7 +442,7 @@ mod tests {
     #[test]
     fn delete_clears_all_progenitors_at_once() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
         app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
 
         app.handle_key(key(KeyCode::Delete));
@@ -466,7 +456,7 @@ mod tests {
     #[test]
     fn marked_progenitors_pin_to_the_top_of_the_pals_list() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
         app.progenitors = vec![PalName::new("PinkCat")];
 
         // Pinned first with no filter, ahead of alphabetical order.
@@ -483,7 +473,7 @@ mod tests {
     #[test]
     fn progenitor_mode_reports_that_passives_need_the_pool() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
         app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
         app.target = Some(PalName::new("DreamDemon"));
         app.selected_passives = vec![PassiveName::new("Swift")];
@@ -507,7 +497,7 @@ mod tests {
     #[test]
     fn f2_toggles_wild_mode_and_search_honors_it() {
         let f = fixture();
-        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        let mut app = App::new(f.solver, Vec::new());
         assert!(app.allow_wild);
 
         app.handle_key(key(KeyCode::F(2)));
@@ -557,7 +547,7 @@ mod tests {
                 passives: Vec::new(),
             },
         ];
-        let mut app = App::new(&f.db, &f.index, &f.odds, owned);
+        let mut app = App::new(f.solver, owned);
         // Fuack needs two generations from this pool (via Daedream).
         app.target = Some(PalName::new("BluePlatypus"));
         app.allow_wild = false;
@@ -588,7 +578,7 @@ mod tests {
                 passives: Vec::new(),
             },
         ];
-        let mut app = App::new(&f.db, &f.index, &f.odds, owned);
+        let mut app = App::new(f.solver, owned);
         app.target = Some(PalName::new("DreamDemon"));
         app.allow_wild = false;
         app.run_search();

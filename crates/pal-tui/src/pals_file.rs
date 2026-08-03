@@ -81,7 +81,7 @@ mod tests {
             species = "PinkCat"
             gender = "Female"
             "#,
-            &f.db,
+            f.db,
         )
         .unwrap();
 
@@ -95,22 +95,19 @@ mod tests {
     #[test]
     fn unknown_names_are_rejected_with_context() {
         let f = fixture();
-        let species_err = parse(
-            "[[pals]]\nspecies = \"NotAPal\"\ngender = \"male\"\n",
-            &f.db,
-        )
-        .unwrap_err();
+        let species_err =
+            parse("[[pals]]\nspecies = \"NotAPal\"\ngender = \"male\"\n", f.db).unwrap_err();
         assert!(species_err.to_string().contains("NotAPal"));
 
         let passive_err = parse(
             "[[pals]]\nspecies = \"Lamball\"\ngender = \"male\"\npassives = [\"NotASkill\"]\n",
-            &f.db,
+            f.db,
         )
         .unwrap_err();
         assert!(passive_err.to_string().contains("NotASkill"));
 
         let gender_err =
-            parse("[[pals]]\nspecies = \"Lamball\"\ngender = \"yes\"\n", &f.db).unwrap_err();
+            parse("[[pals]]\nspecies = \"Lamball\"\ngender = \"yes\"\n", f.db).unwrap_err();
         assert!(gender_err.to_string().contains("male or female"));
     }
 }

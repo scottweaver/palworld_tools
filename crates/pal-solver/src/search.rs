@@ -3,9 +3,9 @@
 //! A simplified take on palcalc's `BreedingSolver`: candidate pals
 //! (owned, then bred intermediates) are pairwise combined for up to
 //! `max_breeding_steps` rounds, beam-pruned per (species,
-//! carried-passives) state and by species reachability, and ranked by
-//! **expected eggs** — the expected number of breeding attempts
-//! across the whole plan.
+//! carried-passives, required-progenitors) state and by species
+//! reachability, and ranked by **expected eggs** — the expected
+//! number of breeding attempts across the whole plan.
 //!
 //! Cost model, per bred node: one egg succeeds when the child rolls
 //! every passive the node must carry (see [`crate::passives`]) and,
@@ -19,12 +19,24 @@
 //! their carried passives to the child's inheritance pool, effort is
 //! measured in eggs rather than wall-clock time, and capture effort
 //! is not modeled.
+//!
+//! Construct a [`Solver`] once per session: it precomputes the
+//! species adjacency and memoizes per-goal distance maps, so repeated
+//! searches skip that setup. Internally the search works on an
+//! append-only arena of candidate records — plan trees are only
+//! materialized for the returned results — expands one frontier per
+//! round (pairs where at least one side is new; older pairs already
+//! produced their children), enumerates pairs species-group-first so
+//! unreachable combinations are rejected wholesale, and fans the
+//! group work out with rayon.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use pal_core::model::{Gender, PalDb, PalName, PassiveName};
+use pal_core::model::{Gender, Pal, PalDb, PalName, PassiveName};
+use rayon::prelude::*;
 
-use crate::child::{BreedingPair, ChildIndex};
+use crate::child::ChildIndex;
 use crate::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
 use crate::steps::SpeciesAdjacency;
 
@@ -126,17 +138,146 @@ pub enum SearchError {
     TooManyProgenitors { count: usize },
 }
 
-/// Finds breeding plans producing `goal` from `owned`, ranked by
-/// expected eggs (ascending). Returns an empty list when the goal is
-/// unreachable within `config.max_breeding_steps`.
-///
-/// `index` must be built from the same database generation as
-/// `pal_db`; species the index yields but `pal_db` lacks are skipped.
+/// Reusable search context: build once, search many times. Holds the
+/// precomputed species adjacency and a per-goal distance cache.
+pub struct Solver<'db> {
+    pal_db: &'db PalDb,
+    index: &'db ChildIndex,
+    odds: &'db PassiveOdds,
+    adjacency: SpeciesAdjacency,
+    distance_cache: Mutex<HashMap<PalName, Arc<HashMap<PalName, u32>>>>,
+}
+
+impl<'db> Solver<'db> {
+    /// `index` must be built from the same database generation as
+    /// `pal_db`; species the index yields but `pal_db` lacks are
+    /// skipped.
+    #[must_use]
+    pub fn new(pal_db: &'db PalDb, index: &'db ChildIndex, odds: &'db PassiveOdds) -> Self {
+        Self {
+            pal_db,
+            index,
+            odds,
+            adjacency: SpeciesAdjacency::build(pal_db, index),
+            distance_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The database this solver searches over.
+    #[must_use]
+    pub fn pal_db(&self) -> &'db PalDb {
+        self.pal_db
+    }
+
+    fn distances_to(&self, goal: &PalName) -> Arc<HashMap<PalName, u32>> {
+        let mut cache = self
+            .distance_cache
+            .lock()
+            .expect("poisoned only if a panicking thread held the cache lock");
+        cache
+            .entry(goal.clone())
+            .or_insert_with(|| Arc::new(self.adjacency.distances_to(goal)))
+            .clone()
+    }
+
+    /// Finds breeding plans producing `goal` from `owned`, ranked by
+    /// expected eggs (ascending). Returns an empty list when the goal
+    /// is unreachable within `config.max_breeding_steps`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the goal, an owned pal, or a progenitor names an
+    /// unknown species, or when the goal's passive or progenitor
+    /// lists have duplicates or exceed their caps.
+    pub fn find_paths(
+        &self,
+        owned: &[OwnedPal],
+        goal: &BreedingGoal,
+        config: &SearchConfig,
+    ) -> Result<Vec<BreedingPlan>, SearchError> {
+        validate(self.pal_db, owned, goal)?;
+        if config.max_results == 0 {
+            return Ok(Vec::new());
+        }
+        let distance_to_goal = self.distances_to(&goal.species);
+
+        let mut arena: Vec<Record> = Vec::new();
+        seed_leaves(
+            &mut arena,
+            self.pal_db,
+            owned,
+            goal,
+            &distance_to_goal,
+            config,
+        );
+        let leaves: Vec<RecordId> = (0..arena.len()).map(RecordId).collect();
+        let mut buckets: HashMap<BredState, Vec<RecordId>> = HashMap::new();
+        let mut frontier = leaves.clone();
+
+        for _ in 0..config.max_breeding_steps {
+            let children = expand_frontier(
+                ExpandContext {
+                    pal_db: self.pal_db,
+                    index: self.index,
+                    odds: self.odds,
+                    goal,
+                    distance_to_goal: &distance_to_goal,
+                    config,
+                },
+                &arena,
+                &leaves,
+                &buckets,
+                &frontier,
+            );
+            frontier.clear();
+            for child in children {
+                if let Some(id) = insert_pruned(&mut arena, &mut buckets, child, config.max_results)
+                {
+                    frontier.push(id);
+                }
+            }
+            if frontier.is_empty() {
+                break;
+            }
+        }
+
+        let full = DesiredMask::full(goal.passives.len());
+        let all_progenitors = DesiredMask::full(goal.progenitors.len());
+        let mut plans: Vec<BreedingPlan> = leaves
+            .iter()
+            .chain(buckets.values().flatten())
+            .filter(|id| {
+                let record = &arena[id.0];
+                record.species == goal.species
+                    && record.carried == full
+                    && record.required == all_progenitors
+            })
+            .map(|id| {
+                let record = &arena[id.0];
+                BreedingPlan {
+                    root: materialize(&arena, owned, *id),
+                    expected_eggs: record.root_cost(),
+                    steps: record.bred_count,
+                }
+            })
+            .collect();
+        plans.sort_by(|a, b| {
+            a.expected_eggs
+                .total_cmp(&b.expected_eggs)
+                .then(a.steps.cmp(&b.steps))
+        });
+        plans.truncate(config.max_results);
+        Ok(plans)
+    }
+}
+
+/// One-shot convenience over [`Solver`]. Prefer holding a `Solver`
+/// when searching more than once: this rebuilds the adjacency every
+/// call.
 ///
 /// # Errors
 ///
-/// Fails when the goal or an owned pal names an unknown species, or
-/// when the goal's passive list has duplicates or exceeds the cap.
+/// Same failure modes as [`Solver::find_paths`].
 pub fn find_paths(
     pal_db: &PalDb,
     index: &ChildIndex,
@@ -145,79 +286,7 @@ pub fn find_paths(
     goal: &BreedingGoal,
     config: &SearchConfig,
 ) -> Result<Vec<BreedingPlan>, SearchError> {
-    validate(pal_db, owned, goal)?;
-    if config.max_results == 0 {
-        return Ok(Vec::new());
-    }
-
-    let adjacency = SpeciesAdjacency::build(pal_db, index);
-    let distance_to_goal = adjacency.distances_to(&goal.species);
-
-    let mut working: Vec<Candidate> = owned
-        .iter()
-        .map(|pal| Candidate::owned(pal, &goal.passives))
-        .collect();
-    working.extend(
-        goal.progenitors
-            .iter()
-            .enumerate()
-            .map(|(position, species)| Candidate {
-                node: PlanNode::Progenitor(species.clone()),
-                species: species.clone(),
-                gender: GenderAvailability::AnyFree,
-                carried: DesiredMask::of(&[], &[]),
-                contribution: Vec::new(),
-                parents_cost: 0.0,
-                egg_p: 1.0,
-                bred_count: 0,
-                required: DesiredMask::single(position),
-            }),
-    );
-    if config.allow_wild_pals {
-        working.extend(wild_candidates(pal_db, &distance_to_goal, config));
-    }
-
-    for _ in 0..config.max_breeding_steps {
-        let round_children = expand_round(
-            pal_db,
-            index,
-            odds,
-            &working,
-            goal,
-            &distance_to_goal,
-            config,
-        );
-        let mut added = false;
-        for child in round_children {
-            added |= insert_pruned(&mut working, child, config.max_results);
-        }
-        if !added {
-            break;
-        }
-    }
-
-    let full = DesiredMask::full(goal.passives.len());
-    let all_progenitors = DesiredMask::full(goal.progenitors.len());
-    let mut plans: Vec<BreedingPlan> = working
-        .into_iter()
-        .filter(|candidate| {
-            candidate.species == goal.species
-                && candidate.carried == full
-                && candidate.required == all_progenitors
-        })
-        .map(|candidate| BreedingPlan {
-            expected_eggs: candidate.root_cost(),
-            steps: candidate.bred_count,
-            root: candidate.node,
-        })
-        .collect();
-    plans.sort_by(|a, b| {
-        a.expected_eggs
-            .total_cmp(&b.expected_eggs)
-            .then(a.steps.cmp(&b.steps))
-    });
-    plans.truncate(config.max_results);
-    Ok(plans)
+    Solver::new(pal_db, index, odds).find_paths(owned, goal, config)
 }
 
 fn validate(pal_db: &PalDb, owned: &[OwnedPal], goal: &BreedingGoal) -> Result<(), SearchError> {
@@ -255,49 +324,9 @@ fn validate(pal_db: &PalDb, owned: &[OwnedPal], goal: &BreedingGoal) -> Result<(
     Ok(())
 }
 
-/// One expansion round: every arrangement of every candidate pair,
-/// in deterministic order. Candidates bred this round only become
-/// pairable next round.
-fn expand_round(
-    pal_db: &PalDb,
-    index: &ChildIndex,
-    odds: &PassiveOdds,
-    working: &[Candidate],
-    goal: &BreedingGoal,
-    distance_to_goal: &HashMap<PalName, u32>,
-    config: &SearchConfig,
-) -> Vec<Candidate> {
-    let context = BreedContext {
-        pal_db,
-        index,
-        odds,
-        goal,
-        distance_to_goal,
-        config,
-    };
-    let order = expansion_order(working);
-    let mut children = Vec::new();
-    for (slot, &first) in order.iter().enumerate() {
-        for &second in &order[slot..] {
-            let both = [(first, second), (second, first)];
-            let arrangements = if first == second {
-                &both[..1]
-            } else {
-                &both[..]
-            };
-            for &(male, female) in arrangements {
-                if let Some(child) = context.breed(&working[male], &working[female]) {
-                    children.push(child);
-                }
-            }
-        }
-    }
-    children
-}
-
 /// Subset of a small goal list (desired passives, required
 /// progenitors), one bit per entry.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct DesiredMask(u8);
 
 impl DesiredMask {
@@ -310,6 +339,10 @@ impl DesiredMask {
         } else {
             Self(u8::MAX >> (8 - desired_len))
         }
+    }
+
+    fn empty() -> Self {
+        Self(0)
     }
 
     fn single(position: usize) -> Self {
@@ -350,45 +383,50 @@ enum GenderAvailability {
     Fixed(Gender),
     /// A bred pal can be re-hatched to either gender at egg cost.
     Flexible { male: f64, female: f64 },
-    /// A wild pal: catch whichever gender is needed at no egg cost.
+    /// A wild pal or progenitor: obtain whichever gender is needed at
+    /// no egg cost.
     AnyFree,
 }
 
+/// Index into the search arena. Records are append-only, so an id
+/// stays valid for the whole search even after beam replacement drops
+/// it from a bucket.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct RecordId(usize);
+
+/// How a record entered the search — enough to rebuild its
+/// [`PlanNode`] tree at materialization time.
+#[derive(Clone, Copy, Debug)]
+enum Source {
+    Owned(usize),
+    Wild,
+    Progenitor,
+    Bred { male: RecordId, female: RecordId },
+}
+
+/// Beam-pruning state: bred candidates compete within their
+/// (species, carried, required) bucket.
+type BredState = (PalName, DesiredMask, DesiredMask);
+
 #[derive(Clone, Debug)]
-struct Candidate {
-    node: PlanNode,
+struct Record {
+    source: Source,
     species: PalName,
     gender: GenderAvailability,
     carried: DesiredMask,
+    required: DesiredMask,
     /// Distinct passives this candidate contributes to a child's
     /// inheritance pool: everything an owned pal has, exactly the
-    /// carried set for a bred pal.
+    /// carried set for a bred pal, nothing for wilds and progenitors.
     contribution: Vec<PassiveName>,
-    /// Expected eggs spent producing the parents (0 for owned).
+    /// Expected eggs spent producing the parents (0 for leaves).
     parents_cost: f64,
-    /// P(one egg carries this node's passives); 1 for owned.
+    /// P(one egg carries this node's passives); 1 for leaves.
     egg_p: f64,
     bred_count: usize,
-    /// Which of the goal's required progenitors this candidate's tree
-    /// includes.
-    required: DesiredMask,
 }
 
-impl Candidate {
-    fn owned(pal: &OwnedPal, desired: &[PassiveName]) -> Self {
-        Self {
-            node: PlanNode::Owned(pal.clone()),
-            species: pal.species.clone(),
-            gender: GenderAvailability::Fixed(pal.gender),
-            carried: DesiredMask::of(desired, &pal.passives),
-            contribution: distinct(&pal.passives),
-            parents_cost: 0.0,
-            egg_p: 1.0,
-            bred_count: 0,
-            required: DesiredMask::of(&[], &[]),
-        }
-    }
-
+impl Record {
     /// Expected eggs to obtain this candidate with the given gender;
     /// `None` when impossible (wrong fixed gender, zero probability).
     fn cost_as(&self, required: Gender) -> Option<f64> {
@@ -416,41 +454,75 @@ impl Candidate {
     }
 }
 
-/// Free-capture candidates for every wild-spawning species that can
-/// still reach the goal, in deterministic (name) order.
-fn wild_candidates(
-    pal_db: &PalDb,
-    distance_to_goal: &HashMap<PalName, u32>,
-    config: &SearchConfig,
-) -> Vec<Candidate> {
-    let mut reachable: Vec<&pal_core::model::Pal> = pal_db
-        .pals()
-        .filter(|pal| pal.wild_levels.is_some())
-        .filter(|pal| {
-            distance_to_goal
-                .get(&pal.name)
-                .and_then(|distance| usize::try_from(*distance).ok())
-                .is_some_and(|distance| distance <= config.max_breeding_steps)
-        })
-        .collect();
-    reachable.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
-    reachable
-        .into_iter()
-        .map(|pal| Candidate {
-            node: PlanNode::Wild(pal.name.clone()),
-            species: pal.name.clone(),
-            gender: GenderAvailability::AnyFree,
-            carried: DesiredMask::of(&[], &[]),
-            contribution: Vec::new(),
-            parents_cost: 0.0,
-            egg_p: 1.0,
-            bred_count: 0,
-            required: DesiredMask::of(&[], &[]),
-        })
-        .collect()
+fn leaf_record(source: Source, species: PalName, gender: GenderAvailability) -> Record {
+    Record {
+        source,
+        species,
+        gender,
+        carried: DesiredMask::empty(),
+        required: DesiredMask::empty(),
+        contribution: Vec::new(),
+        parents_cost: 0.0,
+        egg_p: 1.0,
+        bred_count: 0,
+    }
 }
 
-struct BreedContext<'a> {
+/// Seeds the arena: owned pals, then progenitors, then (when enabled)
+/// wild-spawning species that can still reach the goal, in
+/// deterministic name order.
+fn seed_leaves(
+    arena: &mut Vec<Record>,
+    pal_db: &PalDb,
+    owned: &[OwnedPal],
+    goal: &BreedingGoal,
+    distance_to_goal: &HashMap<PalName, u32>,
+    config: &SearchConfig,
+) {
+    arena.extend(owned.iter().enumerate().map(|(position, pal)| Record {
+        carried: DesiredMask::of(&goal.passives, &pal.passives),
+        contribution: distinct(&pal.passives),
+        ..leaf_record(
+            Source::Owned(position),
+            pal.species.clone(),
+            GenderAvailability::Fixed(pal.gender),
+        )
+    }));
+    arena.extend(
+        goal.progenitors
+            .iter()
+            .enumerate()
+            .map(|(position, species)| Record {
+                required: DesiredMask::single(position),
+                ..leaf_record(
+                    Source::Progenitor,
+                    species.clone(),
+                    GenderAvailability::AnyFree,
+                )
+            }),
+    );
+    if config.allow_wild_pals {
+        let mut reachable: Vec<&Pal> = pal_db
+            .pals()
+            .filter(|pal| pal.wild_levels.is_some())
+            .filter(|pal| {
+                distance_to_goal
+                    .get(&pal.name)
+                    .and_then(|distance| usize::try_from(*distance).ok())
+                    .is_some_and(|distance| distance <= config.max_breeding_steps)
+            })
+            .collect();
+        reachable.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+        arena.extend(
+            reachable.into_iter().map(|pal| {
+                leaf_record(Source::Wild, pal.name.clone(), GenderAvailability::AnyFree)
+            }),
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExpandContext<'a> {
     pal_db: &'a PalDb,
     index: &'a ChildIndex,
     odds: &'a PassiveOdds,
@@ -459,112 +531,233 @@ struct BreedContext<'a> {
     config: &'a SearchConfig,
 }
 
-impl BreedContext<'_> {
-    /// Attempts one breeding arrangement; `None` when it is
-    /// impossible, over the step budget, or cannot reach the goal
-    /// species in the remaining steps.
-    fn breed(&self, male: &Candidate, female: &Candidate) -> Option<Candidate> {
-        let bred_count = male.bred_count + female.bred_count + 1;
-        if bred_count > self.config.max_breeding_steps {
-            return None;
-        }
-
-        let male_cost = male.cost_as(Gender::Male)?;
-        let female_cost = female.cost_as(Gender::Female)?;
-
-        let child = self.index.child_of(&BreedingPair {
-            male: male.species.clone(),
-            female: female.species.clone(),
-        })?;
-        let remaining = self.config.max_breeding_steps - bred_count;
-        let distance = *self.distance_to_goal.get(child)?;
-        if usize::try_from(distance).map_or(true, |steps| steps > remaining) {
-            return None;
-        }
-        let child_pal = self.pal_db.pal(child)?;
-
-        let carried = male.carried.union(female.carried);
-        let pool = merged_pool(&male.contribution, &female.contribution);
-        let egg_p: f64 = (carried.count()..=MAX_TOTAL_PASSIVES)
-            .map(|num_final| {
-                self.odds
-                    .exact_total_probability(pool.len(), carried.count(), num_final)
-            })
-            .sum();
-        if egg_p <= 0.0 {
-            return None;
-        }
-
-        let carried_passives = carried.names(&self.goal.passives);
-        Some(Candidate {
-            node: PlanNode::Bred(Box::new(BredNode {
-                male: male.node.clone(),
-                female: female.node.clone(),
-                species: child.clone(),
-                carried_passives: carried_passives.clone(),
-            })),
-            species: child.clone(),
-            gender: GenderAvailability::Flexible {
-                male: child_pal.gender_probability.of(Gender::Male),
-                female: child_pal.gender_probability.of(Gender::Female),
-            },
-            carried,
-            contribution: carried_passives,
-            parents_cost: male_cost + female_cost,
-            egg_p,
-            bred_count,
-            required: male.required.union(female.required),
-        })
-    }
+/// Members of one species during a round, split into the ids added
+/// last round (frontier) and everything older. Pairs where both sides
+/// are old already produced their children in an earlier round.
+#[derive(Default)]
+struct SpeciesGroup<'a> {
+    species: Option<&'a PalName>,
+    fresh: Vec<RecordId>,
+    old: Vec<RecordId>,
 }
 
-/// Deterministic expansion order: candidate indexes sorted by state
-/// key and cost, so results never depend on insertion order.
-fn expansion_order(working: &[Candidate]) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..working.len()).collect();
-    order.sort_by(|&a, &b| {
-        let (a, b) = (&working[a], &working[b]);
+/// One expansion round, species-group-first: for every ordered
+/// (male-species, female-species) pair the child and its reachability
+/// are checked once, and only viable groups iterate their members.
+/// Groups run in parallel; output order is deterministic.
+fn expand_frontier(
+    context: ExpandContext<'_>,
+    arena: &[Record],
+    leaves: &[RecordId],
+    buckets: &HashMap<BredState, Vec<RecordId>>,
+    frontier: &[RecordId],
+) -> Vec<Record> {
+    let groups = species_groups(arena, leaves, buckets, frontier);
+    let mut ordered: Vec<&SpeciesGroup> = groups.values().collect();
+    ordered.sort_by(|a, b| {
         a.species
-            .as_str()
-            .cmp(b.species.as_str())
-            .then(a.carried.0.cmp(&b.carried.0))
-            .then(a.required.0.cmp(&b.required.0))
-            .then(a.bred_count.cmp(&b.bred_count))
-            .then(a.root_cost().total_cmp(&b.root_cost()))
+            .map(PalName::as_str)
+            .cmp(&b.species.map(PalName::as_str))
     });
-    order
-}
 
-/// Beam-prunes into the working set: keeps at most `beam` bred
-/// candidates per (species, carried, required-progenitors) state,
-/// best root-cost first. Leaf candidates are never pruned. Returns
-/// whether the candidate was kept.
-fn insert_pruned(working: &mut Vec<Candidate>, candidate: Candidate, beam: usize) -> bool {
-    let same_state: Vec<usize> = working
+    let species_pairs: Vec<(&SpeciesGroup, &SpeciesGroup)> = ordered
         .iter()
-        .enumerate()
-        .filter(|(_, existing)| {
-            existing.bred_count > 0
-                && existing.species == candidate.species
-                && existing.carried == candidate.carried
-                && existing.required == candidate.required
-        })
-        .map(|(position, _)| position)
+        .flat_map(|&male| ordered.iter().map(move |&female| (male, female)))
         .collect();
 
-    if same_state.len() < beam {
-        working.push(candidate);
-        return true;
-    }
-    let worst = same_state
+    species_pairs
+        .par_iter()
+        .map(|&(males, females)| expand_group_pair(context, arena, males, females))
+        .collect::<Vec<Vec<Record>>>()
         .into_iter()
-        .max_by(|&a, &b| working[a].root_cost().total_cmp(&working[b].root_cost()))
-        .expect("same_state has at least `beam` (>= 1) entries");
-    if candidate.root_cost() < working[worst].root_cost() {
-        working[worst] = candidate;
-        return true;
+        .flatten()
+        .collect()
+}
+
+fn species_groups<'a>(
+    arena: &'a [Record],
+    leaves: &[RecordId],
+    buckets: &HashMap<BredState, Vec<RecordId>>,
+    frontier: &[RecordId],
+) -> HashMap<&'a PalName, SpeciesGroup<'a>> {
+    let mut is_fresh = vec![false; arena.len()];
+    for id in frontier {
+        is_fresh[id.0] = true;
     }
-    false
+    let mut groups: HashMap<&PalName, SpeciesGroup> = HashMap::new();
+    for &id in leaves.iter().chain(buckets.values().flatten()) {
+        let record = &arena[id.0];
+        let group = groups.entry(&record.species).or_default();
+        group.species = Some(&record.species);
+        if is_fresh[id.0] {
+            group.fresh.push(id);
+        } else {
+            group.old.push(id);
+        }
+    }
+    for group in groups.values_mut() {
+        group.fresh.sort_by_key(|id| id.0);
+        group.old.sort_by_key(|id| id.0);
+    }
+    groups
+}
+
+/// All member pairs of one ordered species pair where at least one
+/// side is fresh, in deterministic order.
+fn expand_group_pair(
+    context: ExpandContext<'_>,
+    arena: &[Record],
+    males: &SpeciesGroup,
+    females: &SpeciesGroup,
+) -> Vec<Record> {
+    let (Some(male_species), Some(female_species)) = (males.species, females.species) else {
+        return Vec::new();
+    };
+    let Some(child) = context.index.child_between(male_species, female_species) else {
+        return Vec::new();
+    };
+    let Some(&distance) = context.distance_to_goal.get(child) else {
+        return Vec::new();
+    };
+    // Cheapest possible pair is two leaves: one bred step, so the
+    // child must be reachable with at least one step spent.
+    if usize::try_from(distance).map_or(true, |steps| steps + 1 > context.config.max_breeding_steps)
+    {
+        return Vec::new();
+    }
+    let Some(child_pal) = context.pal_db.pal(child) else {
+        return Vec::new();
+    };
+
+    let mut children = Vec::new();
+    let mut try_pair = |male_id: RecordId, female_id: RecordId| {
+        if let Some(record) = breed(context, arena, child, child_pal, male_id, female_id) {
+            children.push(record);
+        }
+    };
+    for &male in &males.fresh {
+        for &female in females.fresh.iter().chain(&females.old) {
+            try_pair(male, female);
+        }
+    }
+    for &male in &males.old {
+        for &female in &females.fresh {
+            try_pair(male, female);
+        }
+    }
+    children
+}
+
+/// Attempts one breeding arrangement; `None` when it is impossible or
+/// over the step budget. Species-level checks (child, reachability)
+/// already happened at the group level.
+fn breed(
+    context: ExpandContext<'_>,
+    arena: &[Record],
+    child: &PalName,
+    child_pal: &Pal,
+    male_id: RecordId,
+    female_id: RecordId,
+) -> Option<Record> {
+    let male = &arena[male_id.0];
+    let female = &arena[female_id.0];
+
+    // A single owned individual cannot breed with itself; free
+    // leaves (wild, progenitor) represent obtainable pairs.
+    if male_id == female_id && matches!(male.gender, GenderAvailability::Fixed(_)) {
+        return None;
+    }
+
+    let bred_count = male.bred_count + female.bred_count + 1;
+    if bred_count > context.config.max_breeding_steps {
+        return None;
+    }
+    let remaining = context.config.max_breeding_steps - bred_count;
+    let distance = *context.distance_to_goal.get(child)?;
+    if usize::try_from(distance).map_or(true, |steps| steps > remaining) {
+        return None;
+    }
+
+    let male_cost = male.cost_as(Gender::Male)?;
+    let female_cost = female.cost_as(Gender::Female)?;
+
+    let carried = male.carried.union(female.carried);
+    let pool = merged_pool(&male.contribution, &female.contribution);
+    let egg_p: f64 = (carried.count()..=MAX_TOTAL_PASSIVES)
+        .map(|num_final| {
+            context
+                .odds
+                .exact_total_probability(pool.len(), carried.count(), num_final)
+        })
+        .sum();
+    if egg_p <= 0.0 {
+        return None;
+    }
+
+    Some(Record {
+        source: Source::Bred {
+            male: male_id,
+            female: female_id,
+        },
+        species: child.clone(),
+        gender: GenderAvailability::Flexible {
+            male: child_pal.gender_probability.of(Gender::Male),
+            female: child_pal.gender_probability.of(Gender::Female),
+        },
+        carried,
+        required: male.required.union(female.required),
+        contribution: carried.names(&context.goal.passives),
+        parents_cost: male_cost + female_cost,
+        egg_p,
+        bred_count,
+    })
+}
+
+/// Beam-prunes into a bucket: keeps at most `beam` bred candidates
+/// per (species, carried, required) state, best root-cost first.
+/// Returns the arena id when the candidate was kept.
+fn insert_pruned(
+    arena: &mut Vec<Record>,
+    buckets: &mut HashMap<BredState, Vec<RecordId>>,
+    record: Record,
+    beam: usize,
+) -> Option<RecordId> {
+    let key = (record.species.clone(), record.carried, record.required);
+    let bucket = buckets.entry(key).or_default();
+    if bucket.len() < beam {
+        let id = RecordId(arena.len());
+        arena.push(record);
+        bucket.push(id);
+        return Some(id);
+    }
+    let worst_slot = (0..bucket.len()).max_by(|&a, &b| {
+        arena[bucket[a].0]
+            .root_cost()
+            .total_cmp(&arena[bucket[b].0].root_cost())
+    })?;
+    if record.root_cost() < arena[bucket[worst_slot].0].root_cost() {
+        let id = RecordId(arena.len());
+        arena.push(record);
+        bucket[worst_slot] = id;
+        Some(id)
+    } else {
+        None
+    }
+}
+
+fn materialize(arena: &[Record], owned: &[OwnedPal], id: RecordId) -> PlanNode {
+    let record = &arena[id.0];
+    match record.source {
+        Source::Owned(position) => PlanNode::Owned(owned[position].clone()),
+        Source::Wild => PlanNode::Wild(record.species.clone()),
+        Source::Progenitor => PlanNode::Progenitor(record.species.clone()),
+        Source::Bred { male, female } => PlanNode::Bred(Box::new(BredNode {
+            male: materialize(arena, owned, male),
+            female: materialize(arena, owned, female),
+            species: record.species.clone(),
+            carried_passives: record.contribution.clone(),
+        })),
+    }
 }
 
 fn merged_pool(first: &[PassiveName], second: &[PassiveName]) -> Vec<PassiveName> {

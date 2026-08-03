@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 
 use pal_core::model::{PalDb, PalName};
 
-use crate::child::{BreedingPair, ChildIndex};
+use crate::child::ChildIndex;
 
 /// For each species, the distinct child species reachable in one
 /// breeding step with any partner (either gender arrangement).
@@ -28,11 +28,7 @@ impl SpeciesAdjacency {
                 let mut reachable: Vec<PalName> = Vec::new();
                 for partner in pal_db.pals() {
                     for (male, female) in [(species, partner), (partner, species)] {
-                        let pair = BreedingPair {
-                            male: male.name.clone(),
-                            female: female.name.clone(),
-                        };
-                        if let Some(child) = index.child_of(&pair)
+                        if let Some(child) = index.child_between(&male.name, &female.name)
                             && !reachable.contains(child)
                         {
                             reachable.push(child.clone());

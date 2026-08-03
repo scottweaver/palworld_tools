@@ -75,6 +75,13 @@ impl ChildIndex {
 
     #[must_use]
     pub fn child_of(&self, pair: &BreedingPair) -> Option<&PalName> {
-        self.by_male.get(&pair.male)?.get(&pair.female)
+        self.child_between(&pair.male, &pair.female)
+    }
+
+    /// The same lookup with borrowed names — for hot paths that would
+    /// otherwise clone names just to build a [`BreedingPair`].
+    #[must_use]
+    pub fn child_between(&self, male: &PalName, female: &PalName) -> Option<&PalName> {
+        self.by_male.get(male)?.get(female)
     }
 }
