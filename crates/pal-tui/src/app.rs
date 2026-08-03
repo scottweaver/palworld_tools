@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(app.species_rows()[0].name, PalName::new("PinkCat"));
 
         // Still pinned (and first) when the filter would exclude it.
-        app.species_filter = "lamb".to_owned();
+        app.species_filter = "lamball".to_owned();
         let rows = app.species_rows();
         assert_eq!(rows[0].name, PalName::new("PinkCat"));
         assert_eq!(rows[1].name, PalName::new("SheepBall"));
