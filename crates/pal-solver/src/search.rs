@@ -12,10 +12,13 @@
 //! when the node is later used as a gendered parent, the required
 //! gender. Bred intermediates are re-bred until they succeed, so
 //! obtaining one costs `parents' cost + 1 / (P(passives) · P(gender))`
-//! expected eggs; owned pals cost nothing. Simplifications versus
-//! palcalc: bred parents contribute exactly their carried passives to
-//! the child's inheritance pool, effort is measured in eggs rather
-//! than wall-clock time, and wild-pal capture is not modeled.
+//! expected eggs; owned pals cost nothing. Goals may name required
+//! progenitors: candidate state then also tracks which progenitors a
+//! tree includes, and only fully-anchored plans are returned.
+//! Simplifications versus palcalc: bred parents contribute exactly
+//! their carried passives to the child's inheritance pool, effort is
+//! measured in eggs rather than wall-clock time, and capture effort
+//! is not modeled.
 
 use std::collections::HashMap;
 
@@ -33,11 +36,17 @@ pub struct OwnedPal {
     pub passives: Vec<PassiveName>,
 }
 
-/// What the search is for: a species, carrying all listed passives.
+/// What the search is for: a species, carrying all listed passives,
+/// bred from all listed progenitors.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BreedingGoal {
     pub species: PalName,
     pub passives: Vec<PassiveName>,
+    /// Required anchor species: every returned plan must include each
+    /// of these as a leaf at least once. Progenitors are available as
+    /// free any-gender leaves regardless of wild spawns (the caller
+    /// has them), and carry no passives.
+    pub progenitors: Vec<PalName>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,13 +63,14 @@ pub struct SearchConfig {
     pub allow_wild_pals: bool,
 }
 
-/// One node of a finished plan: an owned pal, a wild pal to catch
-/// (the pairing position implies the gender to catch), or a breeding
-/// step whose parents are themselves plan nodes.
+/// One node of a finished plan: an owned pal, a wild pal to catch, a
+/// required progenitor (the pairing position implies the gender to
+/// use), or a breeding step whose parents are themselves plan nodes.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PlanNode {
     Owned(OwnedPal),
     Wild(PalName),
+    Progenitor(PalName),
     Bred(Box<BredNode>),
 }
 
@@ -79,7 +89,7 @@ impl PlanNode {
     pub fn species(&self) -> &PalName {
         match self {
             Self::Owned(pal) => &pal.species,
-            Self::Wild(species) => species,
+            Self::Wild(species) | Self::Progenitor(species) => species,
             Self::Bred(node) => &node.species,
         }
     }
@@ -95,6 +105,9 @@ pub struct BreedingPlan {
     pub steps: usize,
 }
 
+/// Most progenitors a goal may require (mask width).
+pub const MAX_PROGENITORS: usize = 8;
+
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SearchError {
     #[error("goal species {0} is not in the database")]
@@ -105,6 +118,12 @@ pub enum SearchError {
     DuplicateDesired(PassiveName),
     #[error("{count} desired passives exceed the {MAX_TOTAL_PASSIVES}-passive cap")]
     TooManyDesired { count: usize },
+    #[error("progenitor species {0} is not in the database")]
+    UnknownProgenitor(PalName),
+    #[error("progenitor {0} listed more than once")]
+    DuplicateProgenitor(PalName),
+    #[error("{count} progenitors exceed the cap of {MAX_PROGENITORS}")]
+    TooManyProgenitors { count: usize },
 }
 
 /// Finds breeding plans producing `goal` from `owned`, ranked by
@@ -138,6 +157,22 @@ pub fn find_paths(
         .iter()
         .map(|pal| Candidate::owned(pal, &goal.passives))
         .collect();
+    working.extend(
+        goal.progenitors
+            .iter()
+            .enumerate()
+            .map(|(position, species)| Candidate {
+                node: PlanNode::Progenitor(species.clone()),
+                species: species.clone(),
+                gender: GenderAvailability::AnyFree,
+                carried: DesiredMask::of(&[], &[]),
+                contribution: Vec::new(),
+                parents_cost: 0.0,
+                egg_p: 1.0,
+                bred_count: 0,
+                required: DesiredMask::single(position),
+            }),
+    );
     if config.allow_wild_pals {
         working.extend(wild_candidates(pal_db, &distance_to_goal, config));
     }
@@ -162,9 +197,14 @@ pub fn find_paths(
     }
 
     let full = DesiredMask::full(goal.passives.len());
+    let all_progenitors = DesiredMask::full(goal.progenitors.len());
     let mut plans: Vec<BreedingPlan> = working
         .into_iter()
-        .filter(|candidate| candidate.species == goal.species && candidate.carried == full)
+        .filter(|candidate| {
+            candidate.species == goal.species
+                && candidate.carried == full
+                && candidate.required == all_progenitors
+        })
         .map(|candidate| BreedingPlan {
             expected_eggs: candidate.root_cost(),
             steps: candidate.bred_count,
@@ -197,6 +237,19 @@ fn validate(pal_db: &PalDb, owned: &[OwnedPal], goal: &BreedingGoal) -> Result<(
     for (position, passive) in goal.passives.iter().enumerate() {
         if goal.passives[..position].contains(passive) {
             return Err(SearchError::DuplicateDesired(passive.clone()));
+        }
+    }
+    if goal.progenitors.len() > MAX_PROGENITORS {
+        return Err(SearchError::TooManyProgenitors {
+            count: goal.progenitors.len(),
+        });
+    }
+    for (position, progenitor) in goal.progenitors.iter().enumerate() {
+        if pal_db.pal(progenitor).is_none() {
+            return Err(SearchError::UnknownProgenitor(progenitor.clone()));
+        }
+        if goal.progenitors[..position].contains(progenitor) {
+            return Err(SearchError::DuplicateProgenitor(progenitor.clone()));
         }
     }
     Ok(())
@@ -242,15 +295,25 @@ fn expand_round(
     children
 }
 
-/// Subset of the goal's passive list, one bit per desired passive.
+/// Subset of a small goal list (desired passives, required
+/// progenitors), one bit per entry.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct DesiredMask(u8);
 
 impl DesiredMask {
-    /// Callers guarantee `desired_len <= MAX_TOTAL_PASSIVES` (enforced
-    /// by [`validate`]).
+    /// Callers guarantee the list length fits the mask (enforced by
+    /// [`validate`]: passives <= `MAX_TOTAL_PASSIVES`, progenitors <=
+    /// `MAX_PROGENITORS`).
     fn full(desired_len: usize) -> Self {
-        Self((1u8 << desired_len) - 1)
+        if desired_len == 0 {
+            Self(0)
+        } else {
+            Self(u8::MAX >> (8 - desired_len))
+        }
+    }
+
+    fn single(position: usize) -> Self {
+        Self(1 << position)
     }
 
     fn of(desired: &[PassiveName], passives: &[PassiveName]) -> Self {
@@ -306,6 +369,9 @@ struct Candidate {
     /// P(one egg carries this node's passives); 1 for owned.
     egg_p: f64,
     bred_count: usize,
+    /// Which of the goal's required progenitors this candidate's tree
+    /// includes.
+    required: DesiredMask,
 }
 
 impl Candidate {
@@ -319,6 +385,7 @@ impl Candidate {
             parents_cost: 0.0,
             egg_p: 1.0,
             bred_count: 0,
+            required: DesiredMask::of(&[], &[]),
         }
     }
 
@@ -378,6 +445,7 @@ fn wild_candidates(
             parents_cost: 0.0,
             egg_p: 1.0,
             bred_count: 0,
+            required: DesiredMask::of(&[], &[]),
         })
         .collect()
 }
@@ -445,6 +513,7 @@ impl BreedContext<'_> {
             parents_cost: male_cost + female_cost,
             egg_p,
             bred_count,
+            required: male.required.union(female.required),
         })
     }
 }
@@ -459,6 +528,7 @@ fn expansion_order(working: &[Candidate]) -> Vec<usize> {
             .as_str()
             .cmp(b.species.as_str())
             .then(a.carried.0.cmp(&b.carried.0))
+            .then(a.required.0.cmp(&b.required.0))
             .then(a.bred_count.cmp(&b.bred_count))
             .then(a.root_cost().total_cmp(&b.root_cost()))
     });
@@ -466,9 +536,9 @@ fn expansion_order(working: &[Candidate]) -> Vec<usize> {
 }
 
 /// Beam-prunes into the working set: keeps at most `beam` bred
-/// candidates per (species, carried) state, best root-cost first.
-/// Owned candidates are never pruned. Returns whether the candidate
-/// was kept.
+/// candidates per (species, carried, required-progenitors) state,
+/// best root-cost first. Leaf candidates are never pruned. Returns
+/// whether the candidate was kept.
 fn insert_pruned(working: &mut Vec<Candidate>, candidate: Candidate, beam: usize) -> bool {
     let same_state: Vec<usize> = working
         .iter()
@@ -477,6 +547,7 @@ fn insert_pruned(working: &mut Vec<Candidate>, candidate: Candidate, beam: usize
             existing.bred_count > 0
                 && existing.species == candidate.species
                 && existing.carried == candidate.carried
+                && existing.required == candidate.required
         })
         .map(|(position, _)| position)
         .collect();

@@ -174,6 +174,12 @@ fn plan_lines(db: &PalDb, node: &PlanNode, depth: usize, out: &mut Vec<String>) 
         PlanNode::Wild(species) => {
             out.push(format!("{indent}catch {}", display(db, species)));
         }
+        PlanNode::Progenitor(species) => {
+            out.push(format!(
+                "{indent}use   {} (your progenitor)",
+                display(db, species)
+            ));
+        }
         PlanNode::Owned(pal) => {
             let passives = if pal.passives.is_empty() {
                 String::new()
