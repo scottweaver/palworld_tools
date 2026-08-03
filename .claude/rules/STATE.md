@@ -43,17 +43,22 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `ef69e93`, CI green, 47 tests |
+| `main` | trunk | at `6496567`, CI green, 47 tests |
 
 ## Next up
 
-1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
+1. Save-file import (pal-save crate) — declared next 2026-08-03.
+   Opening the save-file boundary is **structural**: ARCHITECTURE.md
+   must be updated in the same PR, and the approach (GVAS parsing
+   dependency vs port, extraction scope, TUI integration) gets a
+   design dialog first.
+2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs.
-2. Solver refinements toward palcalc parity (IVs, time-based effort,
+3. Solver refinements toward palcalc parity (IVs, time-based effort,
    capture-effort costing for wild pals) and TUI follow-ups (in-app
    pool editing; search off the UI thread — worst-case searches are
    ~2s now, enough to warrant a worker for responsiveness).
-3. PROJECT.md carve-out gap: docs PRs carry generated
+4. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
    exclude mirrors (flagged during PR #1 wrap-up).
