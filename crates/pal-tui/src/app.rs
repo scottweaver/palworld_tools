@@ -83,17 +83,28 @@ impl<'db> App<'db> {
         self.db
     }
 
-    /// Species matching the filter, sorted by display name.
+    /// Rows for the Pals pane: marked progenitors pinned at the top
+    /// (in marking order, shown even when the filter would exclude
+    /// them, so each stays one keypress from unmarking), then every
+    /// filter match sorted by display name.
     #[must_use]
     pub fn species_rows(&self) -> Vec<&'db Pal> {
-        let mut rows: Vec<&Pal> = self
+        let pinned: Vec<&Pal> = self
+            .progenitors
+            .iter()
+            .filter_map(|name| self.db.pal(name))
+            .collect();
+        let mut rest: Vec<&Pal> = self
             .db
             .pals()
+            .filter(|pal| !self.progenitors.contains(&pal.name))
             .filter(|pal| {
                 matches_filter(&self.species_filter, &pal.display_name, pal.name.as_str())
             })
             .collect();
-        rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        rest.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        let mut rows = pinned;
+        rows.extend(rest);
         rows
     }
 
@@ -129,6 +140,7 @@ impl<'db> App<'db> {
             KeyCode::F(2) => self.toggle_wild(),
             KeyCode::F(4) => self.toggle_progenitor(),
             KeyCode::F(5) => self.run_search(),
+            KeyCode::Delete => self.clear_progenitors(),
             KeyCode::Backspace => {
                 if let Some(filter) = self.active_filter() {
                     filter.pop();
@@ -243,6 +255,15 @@ impl<'db> App<'db> {
                 pal.display_name,
                 self.progenitors.len()
             );
+        }
+    }
+
+    fn clear_progenitors(&mut self) {
+        if self.progenitors.is_empty() {
+            "no progenitors marked".clone_into(&mut self.status);
+        } else {
+            self.status = format!("cleared {} progenitor(s)", self.progenitors.len());
+            self.progenitors.clear();
         }
     }
 
@@ -410,6 +431,8 @@ mod tests {
         for c in "cattiva".chars() {
             app.handle_key(key(KeyCode::Char(c)));
         }
+        // Row 0 is the pinned Lamball; the filter match sits below it.
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::F(4)));
         assert_eq!(app.progenitors.len(), 2);
 
@@ -436,6 +459,37 @@ mod tests {
         app.focus = Pane::Pals;
         app.handle_key(key(KeyCode::F(4)));
         assert_eq!(app.progenitors.len(), 1);
+    }
+
+    #[test]
+    fn delete_clears_all_progenitors_at_once() {
+        let f = fixture();
+        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
+
+        app.handle_key(key(KeyCode::Delete));
+        assert!(app.progenitors.is_empty());
+        assert!(app.status.contains("cleared 2"));
+
+        app.handle_key(key(KeyCode::Delete));
+        assert!(app.status.contains("no progenitors"));
+    }
+
+    #[test]
+    fn marked_progenitors_pin_to_the_top_of_the_pals_list() {
+        let f = fixture();
+        let mut app = App::new(&f.db, &f.index, &f.odds, Vec::new());
+        app.progenitors = vec![PalName::new("PinkCat")];
+
+        // Pinned first with no filter, ahead of alphabetical order.
+        assert_eq!(app.species_rows()[0].name, PalName::new("PinkCat"));
+
+        // Still pinned (and first) when the filter would exclude it.
+        app.species_filter = "lamb".to_owned();
+        let rows = app.species_rows();
+        assert_eq!(rows[0].name, PalName::new("PinkCat"));
+        assert_eq!(rows[1].name, PalName::new("SheepBall"));
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]
