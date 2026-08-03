@@ -5,7 +5,7 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 ## Active workstream
 
@@ -27,7 +27,11 @@ picker, ranked plan trees) over an owned pool from `pals.toml`, with
 the vendored data embedded in the binary via pal-core's
 `vendored-data` feature (12 MB release binary, self-contained).
 Frontend decisions 2026-08-02: TUI first; **GUI stack (egui vs
-Tauri) deliberately deferred** until pal-gui work starts. 31 tests,
+Tauri) deliberately deferred** until pal-gui work starts. PRs #11 +
+#13 (merged 2026-08-03; #13 superseded the auto-closed #12) made the
+TUI a full planner: ←/→ search depth 1–8, F2 wild-capture mode, F4
+progenitor anchors with required-bitmask solver support, Del
+clear-all, pinned marks, and family-tree plan rendering. 47 tests,
 CI runs `--all-features`. Scope (binding):
 umbrella Rust toolset for Palworld — breeding calculator first
 (ported from tylercamp/palcalc's design, C#/MIT), then save-file
@@ -39,9 +43,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `43e9035`, CI green, 31 tests |
-| `feat/tui-adjustable-steps` | ←/→ search-depth control (1–8) | PR #11 open |
-| `feat/solver-wild-pals` | wild-pal capture mode + progenitor picking (PR #12) | stacked on PR #11, 40 tests green |
+| `main` | trunk | at `ef69e93`, CI green, 47 tests |
 
 ## Next up
 
@@ -60,7 +62,7 @@ the remaining stub.
 ## Most recent meaningful progress
 
 - **2026-08-03 — Progenitor picking (the headline flow), fixed to
-  anchor semantics.** F4 in the Pals pane marks progenitors (`[P]`
+  anchor semantics (PR #13, merged).** F4 in the Pals pane marks progenitors (`[P]`
   rows, pinned to the top; Del clears all). Marks are required
   anchors: every plan must include each marked pal, with wild
   partners recruited around them (`BreedingGoal.progenitors` +
