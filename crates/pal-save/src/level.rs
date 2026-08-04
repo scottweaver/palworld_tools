@@ -447,7 +447,8 @@ fn name_array(array: &ArrayProperty) -> Vec<String> {
                 _ => None,
             })
             .collect(),
-        ArrayProperty::Strings { strings, .. } => strings.iter().filter_map(Clone::clone).collect(),
+        ArrayProperty::Names { names } => names.iter().filter_map(Clone::clone).collect(),
+        ArrayProperty::Strings { strings } => strings.iter().filter_map(Clone::clone).collect(),
         _ => Vec::new(),
     }
 }

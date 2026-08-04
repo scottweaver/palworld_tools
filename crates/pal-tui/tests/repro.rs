@@ -30,6 +30,10 @@ fn describe(node: &PlanNode, depth: usize, out: &mut Vec<String>) {
 
 #[test]
 #[ignore = "diagnostic against a real save; set PAL_SAVE_PATH and PROBE_TARGET"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "linear diagnostic script; splitting would hurt readability"
+)]
 fn reproduce_search_from_save() {
     let save_path = std::env::var("PAL_SAVE_PATH").expect("set PAL_SAVE_PATH");
     let target = std::env::var("PROBE_TARGET").expect("set PROBE_TARGET (internal name)");
@@ -55,21 +59,70 @@ fn reproduce_search_from_save() {
         }
     }
     println!("pool: {} unique profiles", owned.len());
-    for species in ["Anubis", "Manticore"] {
-        let name = PalName::new(species);
-        let genders: Vec<_> = owned
-            .iter()
-            .filter(|pal| pal.species == name)
-            .map(|pal| (pal.gender, pal.passives.len()))
-            .collect();
-        println!("owned {species}: {genders:?}");
+
+    let desired: Vec<_> = std::env::var("PROBE_PASSIVES")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            let skill = db
+                .find_passive(name.trim())
+                .unwrap_or_else(|| panic!("unknown passive {name:?}"));
+            println!(
+                "desired passive: {} = {} (rank {})",
+                name.trim(),
+                skill.name,
+                skill.rank
+            );
+            skill.name.clone()
+        })
+        .collect();
+
+    // Every owned pal carrying all desired passives.
+    for pal in &owned {
+        if !desired.is_empty() && desired.iter().all(|want| pal.passives.contains(want)) {
+            println!(
+                "carrier: {} {:?} passives {:?}",
+                pal.species, pal.gender, pal.passives
+            );
+        }
     }
 
     let goal = BreedingGoal {
         species: PalName::new(target.as_str()),
-        passives: Vec::new(),
+        passives: desired.clone(),
         progenitors: Vec::new(),
     };
+
+    // Independent oracle: brute-force owned male x female pairs whose
+    // child is the target and whose combined passives cover the
+    // desired set.
+    let mut direct_pairs = 0;
+    for male in owned
+        .iter()
+        .filter(|p| p.gender == pal_core::model::Gender::Male)
+    {
+        for female in owned
+            .iter()
+            .filter(|p| p.gender == pal_core::model::Gender::Female)
+        {
+            let child = index.child_between(&male.species, &female.species);
+            if child == Some(&goal.species)
+                && desired
+                    .iter()
+                    .all(|want| male.passives.contains(want) || female.passives.contains(want))
+            {
+                if direct_pairs < 5 {
+                    println!(
+                        "oracle 1-step pair: {} ♂ × {} ♀",
+                        male.species, female.species
+                    );
+                }
+                direct_pairs += 1;
+            }
+        }
+    }
+    println!("oracle: {direct_pairs} direct pair(s) satisfy species+passives");
     let depth = std::env::var("PROBE_DEPTH")
         .ok()
         .and_then(|value| value.parse().ok())

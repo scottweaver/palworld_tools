@@ -41,12 +41,22 @@ fn real_save_imports() {
     let pal_db = pal_core::db::parse_pal_db(&fs::read_to_string(db_path).unwrap()).unwrap();
     let report = import_pals(&pal_db, &save.characters);
 
+    let with_passives = report
+        .pals
+        .iter()
+        .filter(|pal| !pal.passives.is_empty())
+        .count();
     println!(
-        "imported: {} pal(s); players skipped: {}; other skips: {}; unknown passives: {}",
+        "imported: {} pal(s), {} with passives; players skipped: {}; other skips: {}; unknown passives: {}",
         report.pals.len(),
+        with_passives,
         report.skipped_players(),
         report.skipped.len() - report.skipped_players(),
         report.unknown_passives.len(),
+    );
+    assert!(
+        with_passives > 0,
+        "a real box always holds pals with passives — extraction is silently empty"
     );
 
     let mut by_species: BTreeMap<&str, usize> = BTreeMap::new();
