@@ -1,0 +1,17 @@
+[package]
+name = "pal-save"
+description = "Palworld save-file import: Level.sav to typed owned pals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+flate2 = "1.1.9"
+gvas = "0.11.0"
+oozextract = "0.5.4"
+pal-core.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

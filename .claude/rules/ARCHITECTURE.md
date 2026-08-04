@@ -31,10 +31,13 @@ existing code).
 ## Crate layering
 
 - The project is a cargo workspace (2026-08-02). Dependency DAG:
-  frontends (`pal-tui`, `pal-gui`) → `pal-solver` → `pal-core`;
+  frontends (`pal-tui`, `pal-gui`) → `pal-solver` → `pal-core`, and
+  `pal-tui` → `pal-save` → `pal-core` (pal-save opened 2026-08-03);
   `pal-core` depends on no workspace crate. Future feature crates
-  (`pal-save`, `pal-server`, `pal-web`) sit beside `pal-solver` and
-  depend only on `pal-core` unless a dialog decides otherwise.
+  (`pal-server`, `pal-web`) sit beside `pal-solver` and depend only
+  on `pal-core` unless a dialog decides otherwise. `pal-save` knows
+  nothing of `pal-solver`: frontends convert imported pals into
+  solver inputs.
 - Frontends are thin (2026-08-02): no breeding, probability, or
   game-data logic in `pal-tui`/`pal-gui`. The MVP ships both, so any
   logic one frontend needs, the other needs — it lives in a library
@@ -58,10 +61,19 @@ existing code).
   wire format: one versioned loader in `pal-core` (`db.rs`, pinned
   via `SUPPORTED_VERSION`) guards it, and nothing outside that
   loader parses the raw JSON (2026-08-02).
-- Planned boundaries, TBD until their feature starts: Palworld
-  save-file format (`pal-save`, following palworld-save-tools'
-  approach), dedicated-server REST/RCON (`pal-server`), website HTTP
-  surface (`pal-web`). Opening any of these is structural (below).
+- The Palworld save-file boundary is open (2026-08-03, design
+  dialog): `pal-save` parses `Level.sav` — container + GVAS via the
+  `gvas` crate (a core-architecture dependency; it owns Palworld's
+  compression and property formats), plus our own layer for the
+  nested character data, following palworld-save-tools' reference.
+  All wire parsing lives in `pal-save::level`; `pal-save::import`
+  resolves against `PalDb`, and nothing downstream sees GVAS types.
+  Unhinted map structs are self-discovered at parse time and
+  reported, so game-version drift fails loud or heals, never
+  misparses silently.
+- Planned boundaries, TBD until their feature starts:
+  dedicated-server REST/RCON (`pal-server`), website HTTP surface
+  (`pal-web`). Opening either is structural (below).
 
 ## Security and identity
 
@@ -81,6 +93,7 @@ cleanup:
   dependency-DAG changes
 - `crates/pal-core/**` — the data model and the `db.json` loader are
   the schema boundary
+- `crates/pal-save/src/level.rs` — the save-file wire boundary
 - `data/*.json` — vendored database refreshes
 - any new directory under `crates/`
 

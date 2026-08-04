@@ -49,15 +49,15 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `6496567`, CI green, 47 tests |
+| `main` | trunk | at `8d299d8`, CI green, 47 tests |
+| `feat/save-import` | pal-save crate: Level.sav → owned pals | validated on real save, 54 tests green, PR pending |
 
 ## Next up
 
-1. Save-file import (pal-save crate) — declared next 2026-08-03.
-   Opening the save-file boundary is **structural**: ARCHITECTURE.md
-   must be updated in the same PR, and the approach (GVAS parsing
-   dependency vs port, extraction scope, TUI integration) gets a
-   design dialog first.
+1. Merge the `feat/save-import` PR (validated 2026-08-03 on the real
+   save: 706/706 entries, 704 pals/221 species, 0.4s parse). Design
+   decisions: gvas crate + own layer; TUI auto-detects .sav at the
+   existing pool argument; all guild-owned pals import.
 2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs.
 3. Solver refinements toward palcalc parity (IVs, time-based effort,
@@ -71,6 +71,22 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Save-file import built (pal-save crate).**
+  `Level.sav` → typed pals: gvas crate parses the Palworld container
+  natively; `level.rs` extracts `CharacterSaveParameterMap` raw
+  blobs with **self-discovering struct hints** (MissingHint errors
+  drive retry, Guid backtracking, discovered hints reported);
+  `import.rs` resolves species (BOSS_/role prefixes stripped),
+  gender, and passives against PalDb with a full skip report. TUI
+  pool argument auto-detects .sav vs toml (identical profiles
+  deduped). **Validated on the real save**: PlM/Oodle container
+  support added (oozextract; the save era post-dates gvas's zlib
+  path), nested blobs decode under the file's custom versions
+  (12-vs-24-byte vector widths), 706/706 entries → 704 pals, 221
+  species, player detected, 0.4s. Why: real pools, not hand-typed
+  toml. Risk: hint seeds + prefixes track game version — discovery
+  self-heals and `decode_issues`/`malformed_entries` make drift
+  loud.
 - **2026-08-03 — Search rewritten for speed.** `Solver` struct
   (adjacency precomputed once, per-goal distance memo); append-only
   record arena (plan trees materialized only for results, never
