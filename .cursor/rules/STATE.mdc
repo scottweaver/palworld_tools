@@ -37,7 +37,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `0eb3fee`, CI green, 60 tests |
+| `main` | trunk | at `e5ab0d1`, CI green, 60 tests |
 
 ## Next up
 
@@ -55,6 +55,13 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — README + LICENSE (PR #23, merged).** Full user
+  documentation (install, both pool sources, key/mouse reference,
+  plan-tree legend, cost-model semantics incl. documented
+  simplifications, contributor notes) and the MIT license text
+  Cargo.toml had been declaring without a file. Risk: docs drift as
+  features land — treat README's key table and semantics sections as
+  audit-worthy on UX changes.
 - **2026-08-03 — TUI UX batch (PR #21, merged).** Mouse support
   (click selects, ⇧click marks progenitors), wild capture off by
   default, target relocated to the Plans title, selected passives and
@@ -141,12 +148,7 @@ the remaining stub.
   no longer limited to the toml pool — owned pals supply passives,
   wilds bridge species. Risk: capture effort is unmodeled, so
   wild-heavy plans look free; palcalc-style time costing queued.
-- **2026-08-02 — TUI search depth adjustable.** ←/→ set
-  `max_breeding_steps` (1–8, shown in the Plans title; 8 = data max
-  species distance 7 + passive-consolidation headroom). Why: deep
-  progenitor→descendant chains were capped at a hard-coded 3. Risk:
-  depth 7–8 searches on the UI thread can stall on big pools —
-  worker-thread item queued in next-up.
+
 ## Blocked / waiting
 
 - *(nothing)*
