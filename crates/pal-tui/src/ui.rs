@@ -8,9 +8,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::app::{App, Click, Pane};
+use crate::app::{App, Click, Overlay, Pane};
+use crate::command::DocView;
 
 /// The screen regions draw and click hit-testing must agree on.
 struct PaneAreas {
@@ -53,13 +54,43 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_species(frame, app, areas.species);
     draw_passives(frame, app, areas.passives);
     draw_results(frame, app, areas.results);
-    frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
+    frame.render_widget(status_line(app), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · h/a/d IV min (⇧ lowers) · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
+            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · h/a/d IV min (⇧ lowers) · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · : commands (:help) · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,
+    );
+    if let Overlay::Doc(view) = &app.overlay {
+        draw_doc(frame, view, frame.area());
+    }
+}
+
+/// The bottom status line doubles as the vim-style command line:
+/// while the prompt is open it shows the buffer with a block cursor
+/// in place of the status text.
+fn status_line<'app>(app: &'app App) -> Paragraph<'app> {
+    match &app.overlay {
+        Overlay::Prompt(buffer) => Paragraph::new(Line::from(vec![
+            Span::raw(format!(":{buffer}")),
+            Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED)),
+        ])),
+        Overlay::None | Overlay::Doc(_) => Paragraph::new(app.status.as_str()),
+    }
+}
+
+/// Full-screen viewer for `:help` / `:readme`: the embedded markdown
+/// rendered over the panes, unwrapped so tables keep their shape.
+fn draw_doc(frame: &mut Frame, view: &DocView, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = pane_block(view.doc.title(), true)
+        .title_bottom(" ↑/↓/wheel scroll · PgUp/PgDn · Home/End · Esc/q close ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(tui_markdown::from_str(view.doc.markdown())).scroll((view.scroll, 0)),
+        inner,
     );
 }
 
@@ -606,6 +637,28 @@ mod tests {
             .find(|span| span.content == rainbow.display_name.as_str())
             .expect("passive span present");
         assert_eq!(rainbow_span.style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn prompt_and_doc_overlays_render_over_the_panes() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+
+        app.overlay = Overlay::Prompt("hel".to_owned());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(rendered.contains(":hel"));
+
+        app.overlay = Overlay::Doc(crate::command::DocView::open(crate::command::Doc::Help));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(rendered.contains("Help"));
+        assert!(rendered.contains("Esc/q close"));
+        assert!(
+            !rendered.contains("Passives ("),
+            "the viewer covers the panes"
+        );
     }
 
     #[test]
