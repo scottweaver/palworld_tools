@@ -37,7 +37,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `e5ab0d1`, CI green, 60 tests |
+| `main` | trunk | at `8f1102b`, CI green, 60 tests |
 
 ## Next up
 
@@ -55,6 +55,11 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — What-if pals in the repro harness (PR #25,
+  merged).** PROBE_EXTRA injects hypothetical owned pals into
+  real-save searches; used to show a clean 3-desired-passive pal
+  beats its junk-carrying twin (17.14 → 14.64 eggs) and that blank
+  slots beat junk passives, always.
 - **2026-08-03 — README + LICENSE (PR #23, merged).** Full user
   documentation (install, both pool sources, key/mouse reference,
   plan-tree legend, cost-model semantics incl. documented
@@ -139,15 +144,6 @@ the remaining stub.
   are now verbatim tests. Plans render as a family tree (box-drawing
   + emoji leaf tags). Risk: progenitors carry no passives by design;
   passive goals in this mode report guidance instead of plans.
-- **2026-08-02 — Wild-pal capture mode.** pal-core now parses
-  `MinWildLevel`/`MaxWildLevel` (`Pal::wild_levels`, `None` for the
-  13 raid/special forms); `find_paths` gains `allow_wild_pals`:
-  wild-spawning species join as free-capture leaves (any gender,
-  zero eggs, no passives), so plans read "catch X" where useful; TUI
-  toggles it with F2 (default on). Why: progenitor→target planning
-  no longer limited to the toml pool — owned pals supply passives,
-  wilds bridge species. Risk: capture effort is unmodeled, so
-  wild-heavy plans look free; palcalc-style time costing queued.
 
 ## Blocked / waiting
 
