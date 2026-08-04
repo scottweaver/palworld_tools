@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · F2 wild · F5 search · F8 save plan · F9 library · Esc quit",
+            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,

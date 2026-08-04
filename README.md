@@ -30,6 +30,8 @@ Rust.
   every owned pal (species, gender, passive skills) becomes breeding
   stock. Supports current Oodle-compressed saves (`PlM`, Palworld
   0.6+), the older zlib era (`PlZ`), and Xbox containers (`CNK`).
+  `F6` re-imports the file in place, so hatching progress flows in
+  after each in-game save without restarting.
 - **Passive-skill planning** — pick up to 4 target passives; plans
   are ranked by **expected eggs**, computed with palcalc's
   inheritance-probability model (verified against its formulas).
@@ -108,6 +110,7 @@ nothing to submit — pick a target and watch the Plans pane.
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
+| `F6` | Reload the pool from the save/toml on disk (after an in-game save — no restart needed) |
 | `F8` | Save the highlighted plan to the library |
 | `F9` | Toggle the Plans pane between live results and the saved-plan library |
 | `Esc` | Quit |

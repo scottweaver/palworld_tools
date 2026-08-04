@@ -5,6 +5,7 @@
 mod app;
 mod pals_file;
 mod plan_store;
+mod pool;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -33,41 +34,9 @@ fn main() -> Result<()> {
     let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
     let solver = Solver::new(&db, &index, &odds);
 
-    let (owned, pool_status) = match std::fs::read(&pals_path) {
-        Ok(bytes) if pal_save::looks_like_sav(&bytes) => {
-            let save = pal_save::level::read_level_sav(&bytes)
-                .with_context(|| format!("parsing save file {pals_path}"))?;
-            let report = pal_save::import::import_pals(&db, &save.characters);
-            let status = format!(
-                "{} pal(s) imported from {pals_path} ({} player(s), {} other entries skipped)",
-                report.pals.len(),
-                report.skipped_players(),
-                report.skipped.len() - report.skipped_players(),
-            );
-            // Identical breeding profiles are interchangeable to the
-            // solver; deduping keeps big box collections fast.
-            let mut owned: Vec<pal_solver::search::OwnedPal> = Vec::new();
-            for pal in report.pals {
-                let candidate = pal_solver::search::OwnedPal {
-                    species: pal.species,
-                    gender: pal.gender,
-                    passives: pal.passives,
-                };
-                if !owned.contains(&candidate) {
-                    owned.push(candidate);
-                }
-            }
-            let status = format!("{status}; {} unique breeding profile(s)", owned.len());
-            (owned, status)
-        }
-        Ok(bytes) => {
-            let text = String::from_utf8(bytes)
-                .with_context(|| format!("{pals_path} is neither a save file nor UTF-8 TOML"))?;
-            let owned = pals_file::parse(&text, &db).with_context(|| format!("in {pals_path}"))?;
-            let status = format!("{} owned pal(s) loaded from {pals_path}", owned.len());
-            (owned, status)
-        }
-        Err(_) => (
+    let (owned, pool_status) = match pool::load(&pals_path, &db)? {
+        pool::Loaded::Pool { owned, status } => (owned, status),
+        pool::Loaded::Missing => (
             Vec::new(),
             format!("{pals_path} not found — searching from an empty pool"),
         ),
@@ -101,6 +70,7 @@ fn main() -> Result<()> {
     };
 
     let mut app = App::new(&solver, owned, saved);
+    app.pool_path = Some(pals_path);
     app.status = format!("{pool_status}{store_note}");
 
     let mut terminal = ratatui::init();

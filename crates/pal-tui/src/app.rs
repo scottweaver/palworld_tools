@@ -38,6 +38,9 @@ pub struct Click {
 pub struct App<'db> {
     solver: &'db Solver<'db>,
     pub owned: Vec<OwnedPal>,
+    /// Where the owned pool came from, when it came from a file —
+    /// the reload target for F6. `None` for in-memory pools (tests).
+    pub pool_path: Option<String>,
     pub focus: Pane,
     pub species_filter: String,
     pub species_cursor: usize,
@@ -69,6 +72,7 @@ impl<'db> App<'db> {
         Self {
             solver,
             owned,
+            pool_path: None,
             saved,
             viewing_saved: false,
             saved_cursor: 0,
@@ -161,6 +165,7 @@ impl<'db> App<'db> {
             KeyCode::Enter => self.confirm(),
             KeyCode::F(2) => self.toggle_wild(),
             KeyCode::F(4) => self.toggle_progenitor(),
+            KeyCode::F(6) => self.reload_pool(),
             KeyCode::F(5) => self.run_search(),
             KeyCode::F(8) => self.save_current_plan(),
             KeyCode::F(9) => self.toggle_saved_view(),
@@ -249,11 +254,40 @@ impl<'db> App<'db> {
     /// Changing the live question also leaves the saved-plan view.
     fn refresh_plans(&mut self) {
         self.viewing_saved = false;
+        self.replan();
+    }
+
+    fn replan(&mut self) {
         if self.target.is_some() {
             self.search(false);
         } else {
             self.plans.clear();
             self.plan_cursor = 0;
+        }
+    }
+
+    /// F6: re-import the pool from the file it was loaded from, so a
+    /// fresh in-game save lands without restarting the app. Keeps the
+    /// current pool on any failure, and stays in the library view —
+    /// reloading refreshes the world, not the question, and staleness
+    /// banners recompute against the new box.
+    fn reload_pool(&mut self) {
+        let Some(path) = self.pool_path.clone() else {
+            "the pool did not come from a file — nothing to reload".clone_into(&mut self.status);
+            return;
+        };
+        match crate::pool::load(&path, self.db()) {
+            Ok(crate::pool::Loaded::Pool { owned, status }) => {
+                self.owned = owned;
+                self.replan();
+                self.status = format!("reloaded: {status}");
+            }
+            Ok(crate::pool::Loaded::Missing) => {
+                self.status = format!("{path} not found — keeping the current pool");
+            }
+            Err(error) => {
+                self.status = format!("reload failed: {error:#} — keeping the current pool");
+            }
         }
     }
 
@@ -750,6 +784,51 @@ mod tests {
                 collect_progenitor_leaves(&bred.female, out);
             }
         }
+    }
+
+    #[test]
+    fn f6_reloads_the_pool_from_disk_without_restarting() {
+        let f = fixture();
+        let path = std::env::temp_dir().join(format!("pal-tui-reload-{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "[[pals]]\nspecies = \"Lamball\"\ngender = \"male\"\n",
+        )
+        .unwrap();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+
+        // Without a file-backed pool, F6 explains itself.
+        app.handle_key(key(KeyCode::F(6)));
+        assert!(app.status.contains("nothing to reload"));
+
+        app.pool_path = Some(path.to_string_lossy().into_owned());
+        app.handle_key(key(KeyCode::F(6)));
+        assert_eq!(app.owned.len(), 1);
+        assert!(app.status.contains("reloaded"));
+
+        // A grown file lands on the next reload, and plans refresh.
+        std::fs::write(
+            &path,
+            "[[pals]]\nspecies = \"Lamball\"\ngender = \"male\"\n\
+             [[pals]]\nspecies = \"Cattiva\"\ngender = \"female\"\n",
+        )
+        .unwrap();
+        app.target = Some(PalName::new("DreamDemon"));
+        app.handle_key(key(KeyCode::F(6)));
+        assert_eq!(app.owned.len(), 2);
+        assert!(!app.plans.is_empty());
+
+        // Reloading refreshes the world, not the question — the
+        // library view survives it.
+        app.viewing_saved = true;
+        app.handle_key(key(KeyCode::F(6)));
+        assert!(app.viewing_saved);
+
+        // A vanished file keeps the current pool.
+        std::fs::remove_file(&path).unwrap();
+        app.handle_key(key(KeyCode::F(6)));
+        assert_eq!(app.owned.len(), 2);
+        assert!(app.status.contains("keeping the current pool"));
     }
 
     #[test]
