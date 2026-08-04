@@ -43,7 +43,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `afac3f0`, CI green, 54 tests |
+| `main` | trunk | at `118a9c0`, CI green, 55 tests |
 
 ## Next up
 
@@ -61,7 +61,8 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
-- **2026-08-03 — Passive tier colors in the TUI.** Passives render
+- **2026-08-03 — Passive tier colors in the TUI (PR #19, merged).**
+  Passives render
   in the game's palette everywhere they appear (Passives pane + plan
   trees): detrimental (rank < 0) red, regular (1–3) gold, "rainbow"
   tier (4+) teal/cyan; plan trees moved from plain strings to styled
