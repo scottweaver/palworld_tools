@@ -1,11 +1,14 @@
 # Owned-pal pool for pal-tui. Copy to pals.toml (or pass a path as
 # the first argument) and list what you have. Species and passive
 # names accept in-game display names or internal ids, any casing.
+# ivs (0-100 each, optional, default 0) matter only when the search
+# sets IV minimums.
 
 [[pals]]
 species = "Lamball"
 gender = "male"
 passives = ["Swift"]
+ivs = { hp = 85, attack = 92, defense = 70 }
 
 [[pals]]
 species = "Cattiva"

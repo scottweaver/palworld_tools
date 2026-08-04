@@ -62,6 +62,100 @@ pub enum Gender {
     Female,
 }
 
+/// One individual-value stat, `0..=100`. Values are born at the save
+/// boundary via [`IvValue::from_save`], which clamps rather than
+/// fails: an out-of-range talent is game corruption we render inert,
+/// not a condition callers can act on.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(into = "u8", try_from = "u8")]
+pub struct IvValue(u8);
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("IV value {0} is out of range (0..=100)")]
+pub struct InvalidIvValue(u8);
+
+impl IvValue {
+    pub const MAX: Self = Self(100);
+
+    #[must_use]
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "clamped to 0..=100 first; the cast is lossless"
+    )]
+    pub fn from_save(raw: i64) -> Self {
+        Self(raw.clamp(0, 100) as u8)
+    }
+
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<IvValue> for u8 {
+    fn from(value: IvValue) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<u8> for IvValue {
+    type Error = InvalidIvValue;
+
+    fn try_from(raw: u8) -> Result<Self, Self::Error> {
+        if raw > 100 {
+            return Err(InvalidIvValue(raw));
+        }
+        Ok(Self(raw))
+    }
+}
+
+/// The three breeding-relevant individual values of one pal. The
+/// game's `Talent_Melee` is vestigial (no stat uses it) and is not
+/// modeled, matching palcalc.
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, Debug, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(default)]
+pub struct IvSpread {
+    pub hp: IvValue,
+    pub attack: IvValue,
+    pub defense: IvValue,
+}
+
+impl IvSpread {
+    #[must_use]
+    pub fn get(self, stat: IvStat) -> IvValue {
+        match stat {
+            IvStat::Hp => self.hp,
+            IvStat::Attack => self.attack,
+            IvStat::Defense => self.defense,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum IvStat {
+    Hp,
+    Attack,
+    Defense,
+}
+
+impl IvStat {
+    pub const ALL: [Self; 3] = [Self::Hp, Self::Attack, Self::Defense];
+}
+
 /// Gender requirement on one parent slot of a [`BreedingCombo`].
 /// Most combos accept either gender; a few (e.g. Katress + Wixen)
 /// produce different children depending on which parent is which.

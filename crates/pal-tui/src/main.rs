@@ -10,6 +10,7 @@ mod ui;
 
 use anyhow::{Context, Result};
 use pal_solver::child::ChildIndex;
+use pal_solver::iv::IvOdds;
 use pal_solver::passives::PassiveOdds;
 use pal_solver::search::Solver;
 use ratatui::DefaultTerminal;
@@ -32,7 +33,8 @@ fn main() -> Result<()> {
         pal_core::vendored::breeding_db(&db).context("parsing the embedded breeding.json")?;
     let index = ChildIndex::build(&breeding).context("building the child index")?;
     let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
-    let solver = Solver::new(&db, &index, &odds);
+    let iv_odds = IvOdds::from_mechanics(db.mechanics()).context("deriving IV odds")?;
+    let solver = Solver::new(&db, &index, &odds, &iv_odds);
 
     let (owned, pool_status) = match pool::load(&pals_path, &db)? {
         pool::Loaded::Pool { owned, status } => (owned, status),
@@ -108,6 +110,7 @@ mod test_support {
 
     use pal_core::model::PalDb;
     use pal_solver::child::ChildIndex;
+    use pal_solver::iv::IvOdds;
     use pal_solver::passives::PassiveOdds;
     use pal_solver::search::Solver;
 
@@ -128,6 +131,7 @@ mod test_support {
         db: PalDb,
         index: ChildIndex,
         odds: PassiveOdds,
+        iv_odds: IvOdds,
     }
 
     pub struct Fixture {
@@ -143,9 +147,16 @@ mod test_support {
             let breeding = pal_core::vendored::breeding_db(&db).unwrap();
             let index = ChildIndex::build(&breeding).unwrap();
             let odds = PassiveOdds::from_mechanics(db.mechanics()).unwrap();
-            Data { db, index, odds }
+            let iv_odds = IvOdds::from_mechanics(db.mechanics()).unwrap();
+            Data {
+                db,
+                index,
+                odds,
+                iv_odds,
+            }
         });
-        let solver = SOLVER.get_or_init(|| Solver::new(&data.db, &data.index, &data.odds));
+        let solver =
+            SOLVER.get_or_init(|| Solver::new(&data.db, &data.index, &data.odds, &data.iv_odds));
         Fixture {
             db: &data.db,
             solver,

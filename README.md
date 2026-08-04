@@ -37,6 +37,9 @@ Rust.
   inheritance-probability model (verified against its formulas).
 - **Progenitor anchoring** — mark one or more pals as required
   ancestors and every plan is guaranteed to breed *through* them.
+- **IV minimums** — require the target to hit per-stat IV floors
+  (e.g. Attack ≥ 90); plans route through parents that carry the
+  stat and the cost absorbs the inheritance odds (palcalc's model).
 - **Wild-capture mode** — optionally let plans recruit catchable wild
   pals as partners (off by default; your box is the source of truth).
 - **Deep searches, fast** — plans up to 24 breeding steps; typical
@@ -82,6 +85,7 @@ Copies of the file work fine — the app only ever reads it.
 species = "Lamball"      # display or internal name, case-insensitive
 gender = "male"          # male/female (or m/f)
 passives = ["Swift"]     # optional; display or internal names
+ivs = { hp = 85, attack = 92, defense = 70 }  # optional; 0 if omitted
 
 [[pals]]
 species = "Cattiva"
@@ -108,6 +112,7 @@ nothing to submit — pick a target and watch the Plans pane.
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
 | `Ctrl+D` (or `Delete`) | Clear all progenitor marks; in the library: delete the highlighted saved plan (`Backspace` also deletes there — the natural key on Mac laptops) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
+| `h` / `a` / `d` (Plans pane) | Raise the HP / Attack / Defense IV minimum by 10 (uppercase lowers; below 10 turns it off) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
 | `F6` | Reload the pool from the save/toml on disk (after an in-game save — no restart needed) |
@@ -140,7 +145,9 @@ reserving it for text selection — use `F4`.
 
 Passive names are colored by in-game tier: **teal** for the special
 "rainbow" tier (Legend, Lucky, …), **gold** for regular beneficial
-passives, **red** for detrimental ones.
+passives, **red** for detrimental ones. When IV minimums are active,
+owned leaves also show the pal's `hp/attack/defense` IVs, and the
+Plans title shows the floors (`IV ≥ 80/90/–`).
 
 **Expected eggs** is the plan's cost: the statistically expected
 number of eggs you'll hatch across every step, accounting for
@@ -203,11 +210,19 @@ The model follows palcalc:
   computed exactly, per palcalc's formulas.
 - **Gender** re-rolls of bred intermediates cost
   `1 / P(needed gender)` extra eggs.
+- **IVs**: a child inherits 1–3 of its three IV stats from the
+  parents (1/2, 1/3, 1/6), each copied from a random parent. A
+  minimum is *met* through parents at/above it: both parents meeting
+  a stat costs only the category roll, one parent adds a 50/50
+  right-parent chance, and a stat no parent meets cannot be met at
+  all (random rolls are ignored, matching palcalc) — wild pals and
+  progenitors never satisfy IV minimums.
 
 Known simplifications versus PalCalc proper (roadmapped): effort is
 measured in eggs rather than wall-clock time, wild-pal capture is
-free, IVs aren't modeled, and bred parents contribute exactly their
-target passives to the next pool.
+free, IV values collapse to met/not-met against the active minimums,
+and bred parents contribute exactly their target passives to the
+next pool.
 
 ## Game-data coverage
 
@@ -239,7 +254,7 @@ saves are never committed).
 ## Roadmap
 
 - Desktop GUI (`pal-gui`)
-- Solver refinements: capture-effort costing, IVs, wall-clock effort
+- Solver refinements: capture-effort costing, wall-clock effort
 - Background search worker for the heaviest queries
 - Dedicated-server admin tools; pal data website
 

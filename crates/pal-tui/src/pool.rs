@@ -39,6 +39,7 @@ pub fn load(path: &str, db: &PalDb) -> Result<Loaded> {
                 species: pal.species,
                 gender: pal.gender,
                 passives: pal.passives,
+                ivs: pal.ivs,
             };
             if !owned.contains(&candidate) {
                 owned.push(candidate);

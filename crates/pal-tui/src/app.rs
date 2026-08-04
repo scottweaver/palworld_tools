@@ -2,7 +2,8 @@
 //! solver API, testable without a terminal. Rendering lives in
 //! [`crate::ui`]; nothing here draws.
 
-use pal_core::model::{Pal, PalDb, PalName, PassiveName, PassiveSkill};
+use pal_core::model::{IvSpread, IvStat, IvValue, Pal, PalDb, PalName, PassiveName, PassiveSkill};
+use pal_solver::iv::IvThresholds;
 use pal_solver::passives::MAX_TOTAL_PASSIVES;
 use pal_solver::search::{
     BreedingGoal, BreedingPlan, MAX_PROGENITORS, OwnedPal, SearchConfig, Solver,
@@ -53,6 +54,9 @@ pub struct App<'db> {
     pub passive_filter: String,
     pub passive_cursor: usize,
     pub selected_passives: Vec<PassiveName>,
+    /// Per-stat IV minimums on the target; adjusted with h/a/d (+10)
+    /// and H/A/D (-10) while the Plans pane is focused.
+    pub iv_thresholds: IvThresholds,
     pub plans: Vec<BreedingPlan>,
     pub plan_cursor: usize,
     pub saved: PlanStore,
@@ -84,6 +88,7 @@ impl<'db> App<'db> {
             passive_filter: String::new(),
             passive_cursor: 0,
             selected_passives: Vec::new(),
+            iv_thresholds: IvThresholds::default(),
             plans: Vec::new(),
             plan_cursor: 0,
             max_breeding_steps: DEFAULT_BREEDING_STEPS,
@@ -175,6 +180,12 @@ impl<'db> App<'db> {
                 self.contextual_delete();
             }
             KeyCode::Delete => self.contextual_delete(),
+            KeyCode::Char(c @ ('h' | 'H' | 'a' | 'A' | 'd' | 'D'))
+                if self.focus == Pane::Results
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.adjust_iv_threshold(c);
+            }
             KeyCode::Backspace => {
                 // In the library the Mac delete key (= Backspace)
                 // deletes the highlighted plan; elsewhere it edits
@@ -319,6 +330,7 @@ impl<'db> App<'db> {
             goal_species: target.clone(),
             goal_passives: self.selected_passives.clone(),
             goal_progenitors: self.progenitors.clone(),
+            goal_iv_thresholds: self.iv_thresholds,
             expected_eggs: plan.expected_eggs,
             steps: plan.steps,
             root: plan.root.clone(),
@@ -371,6 +383,7 @@ impl<'db> App<'db> {
             species: target,
             passives: self.selected_passives.clone(),
             progenitors: self.progenitors.clone(),
+            iv_thresholds: self.iv_thresholds,
         };
         let pool = if progenitor_mode {
             Vec::new()
@@ -387,9 +400,11 @@ impl<'db> App<'db> {
         match self.solver.find_paths(&pool, &goal, &config) {
             Ok(plans) => {
                 self.status = if plans.is_empty() {
-                    if progenitor_mode && !self.selected_passives.is_empty() {
-                        "no plans — progenitor pals carry no passives; \
-                         deselect passives or plan from pals.toml"
+                    if progenitor_mode
+                        && (!self.selected_passives.is_empty() || !self.iv_thresholds.is_empty())
+                    {
+                        "no plans — progenitor pals carry no passives or IVs; \
+                         drop those requirements or plan from the pool"
                             .to_owned()
                     } else {
                         format!(
@@ -445,6 +460,7 @@ impl<'db> App<'db> {
         self.target = Some(saved.goal_species.clone());
         self.selected_passives.clone_from(&saved.goal_passives);
         self.progenitors.clone_from(&saved.goal_progenitors);
+        self.iv_thresholds = saved.goal_iv_thresholds;
         self.viewing_saved = false;
         self.search(true);
         self.status = match self.plans.first() {
@@ -460,13 +476,22 @@ impl<'db> App<'db> {
     }
 
     /// Owned pals in a saved plan's tree that no longer exist in the
-    /// current pool — the plan's staleness measure.
+    /// current pool — the plan's staleness measure. Leaves saved
+    /// before IVs were modeled deserialize with zero IVs; those match
+    /// on species/gender/passives alone so old plans don't all read
+    /// stale.
     #[must_use]
     pub fn stale_leaves(&self, saved: &SavedPlan) -> usize {
+        fn leaf_matches(owned: &OwnedPal, saved: &OwnedPal) -> bool {
+            owned.species == saved.species
+                && owned.gender == saved.gender
+                && owned.passives == saved.passives
+                && (saved.ivs == IvSpread::default() || owned.ivs == saved.ivs)
+        }
         fn walk(node: &pal_solver::search::PlanNode, owned: &[OwnedPal], missing: &mut usize) {
             match node {
                 pal_solver::search::PlanNode::Owned(pal) => {
-                    if !owned.contains(pal) {
+                    if !owned.iter().any(|candidate| leaf_matches(candidate, pal)) {
                         *missing += 1;
                     }
                 }
@@ -531,6 +556,35 @@ impl<'db> App<'db> {
         }
     }
 
+    /// h/a/d raise (lowercase) or lower (uppercase) one stat's IV
+    /// minimum in steps of 10; stepping below 10 turns the minimum
+    /// off.
+    fn adjust_iv_threshold(&mut self, key: char) {
+        let stat = match key.to_ascii_lowercase() {
+            'h' => IvStat::Hp,
+            'a' => IvStat::Attack,
+            _ => IvStat::Defense,
+        };
+        let slot = match stat {
+            IvStat::Hp => &mut self.iv_thresholds.hp,
+            IvStat::Attack => &mut self.iv_thresholds.attack,
+            IvStat::Defense => &mut self.iv_thresholds.defense,
+        };
+        let stepped = step_iv_threshold(*slot, key.is_ascii_lowercase());
+        let changed = stepped != *slot;
+        *slot = stepped;
+        if changed {
+            self.refresh_plans();
+        }
+        self.status = format!(
+            "IV minimums — HP {} · Attack {} · Defense {} ({} plan(s))",
+            describe_threshold(self.iv_thresholds.hp),
+            describe_threshold(self.iv_thresholds.attack),
+            describe_threshold(self.iv_thresholds.defense),
+            self.plans.len(),
+        );
+    }
+
     fn toggle_wild(&mut self) {
         self.allow_wild = !self.allow_wild;
         self.status = if self.allow_wild {
@@ -588,6 +642,23 @@ impl<'db> App<'db> {
             Pane::Results => {}
         }
     }
+}
+
+fn step_iv_threshold(current: Option<IvValue>, up: bool) -> Option<IvValue> {
+    let value = current.map_or(0, IvValue::get);
+    let stepped = if up {
+        value.saturating_add(10).min(100)
+    } else {
+        value.saturating_sub(10)
+    };
+    (stepped > 0).then(|| IvValue::try_from(stepped).expect("stepped in 10s within 0..=100"))
+}
+
+fn describe_threshold(threshold: Option<IvValue>) -> String {
+    threshold.map_or_else(
+        || "off".to_owned(),
+        |minimum| format!("≥ {}", minimum.get()),
+    )
 }
 
 fn matches_filter(filter: &str, display_name: &str, internal_name: &str) -> bool {
@@ -787,6 +858,82 @@ mod tests {
     }
 
     #[test]
+    fn iv_threshold_keys_step_in_the_results_pane_and_replan() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+                ivs: IvSpread {
+                    hp: IvValue::try_from(90).unwrap(),
+                    ..IvSpread::default()
+                },
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+                ivs: IvSpread {
+                    hp: IvValue::try_from(85).unwrap(),
+                    ..IvSpread::default()
+                },
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+        app.target = Some(PalName::new("DreamDemon"));
+        app.run_search();
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.focus, Pane::Results);
+        let unconstrained_eggs = app.plans[0].expected_eggs;
+
+        // In a filter pane the same letters keep typing.
+        app.focus = Pane::Pals;
+        app.handle_key(key(KeyCode::Char('h')));
+        assert!(app.iv_thresholds.is_empty());
+        assert_eq!(app.species_filter, "h");
+        app.species_filter.clear();
+
+        // In the Plans pane, h raises the HP minimum by 10s and the
+        // search re-plans: both parents meet 80, so plans remain but
+        // cost the IV roll.
+        app.focus = Pane::Results;
+        for _ in 0..8 {
+            app.handle_key(key(KeyCode::Char('h')));
+        }
+        assert_eq!(app.iv_thresholds.hp, Some(IvValue::try_from(80).unwrap()));
+        assert!(app.status.contains("HP ≥ 80"));
+        assert!(!app.plans.is_empty());
+        assert!(app.plans[0].expected_eggs > unconstrained_eggs);
+
+        // 100 is the ceiling; nobody meets it, so plans vanish.
+        for _ in 0..3 {
+            app.handle_key(key(KeyCode::Char('h')));
+        }
+        assert_eq!(app.iv_thresholds.hp, Some(IvValue::MAX));
+        assert!(app.plans.is_empty());
+
+        // Uppercase steps down; below 10 the minimum turns off.
+        for _ in 0..10 {
+            app.handle_key(key(KeyCode::Char('H')));
+        }
+        assert!(app.iv_thresholds.hp.is_none());
+        assert!(!app.plans.is_empty());
+
+        // a/d drive the other two stats.
+        app.handle_key(key(KeyCode::Char('a')));
+        app.handle_key(key(KeyCode::Char('d')));
+        assert_eq!(
+            app.iv_thresholds.attack,
+            Some(IvValue::try_from(10).unwrap())
+        );
+        assert_eq!(
+            app.iv_thresholds.defense,
+            Some(IvValue::try_from(10).unwrap())
+        );
+    }
+
+    #[test]
     fn f6_reloads_the_pool_from_disk_without_restarting() {
         let f = fixture();
         let path = std::env::temp_dir().join(format!("pal-tui-reload-{}.toml", std::process::id()));
@@ -839,11 +986,13 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
             OwnedPal {
                 species: PalName::new("PinkCat"),
                 gender: Gender::Female,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
         ];
         let mut app = App::new(f.solver, owned, test_store());
@@ -897,6 +1046,7 @@ mod tests {
                     goal_species: PalName::new("DreamDemon"),
                     goal_passives: Vec::new(),
                     goal_progenitors: Vec::new(),
+                    goal_iv_thresholds: IvThresholds::default(),
                     expected_eggs: 1.0,
                     steps: 1,
                     root: pal_solver::search::PlanNode::Wild(PalName::new("SheepBall")),
@@ -926,11 +1076,13 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
             OwnedPal {
                 species: PalName::new("PinkCat"),
                 gender: Gender::Female,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
         ];
         let mut app = App::new(f.solver, owned, test_store());
@@ -967,17 +1119,20 @@ mod tests {
             species: PalName::new("SheepBall"),
             gender: Gender::Male,
             passives: Vec::new(),
+            ivs: IvSpread::default(),
         };
         let cattiva = OwnedPal {
             species: PalName::new("PinkCat"),
             gender: Gender::Female,
             passives: Vec::new(),
+            ivs: IvSpread::default(),
         };
         let saved = SavedPlan {
             label: "test".to_owned(),
             goal_species: PalName::new("DreamDemon"),
             goal_passives: Vec::new(),
             goal_progenitors: Vec::new(),
+            goal_iv_thresholds: IvThresholds::default(),
             expected_eggs: 1.0,
             steps: 1,
             root: pal_solver::search::PlanNode::Bred(Box::new(pal_solver::search::BredNode {
@@ -1004,11 +1159,13 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
             OwnedPal {
                 species: PalName::new("PinkCat"),
                 gender: Gender::Female,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
         ];
         let mut app = App::new(f.solver, owned, test_store());
@@ -1138,11 +1295,13 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
             OwnedPal {
                 species: PalName::new("PinkCat"),
                 gender: Gender::Female,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
         ];
         let mut app = App::new(f.solver, owned, test_store());
@@ -1169,11 +1328,13 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
             OwnedPal {
                 species: PalName::new("PinkCat"),
                 gender: Gender::Female,
                 passives: Vec::new(),
+                ivs: IvSpread::default(),
             },
         ];
         let mut app = App::new(f.solver, owned, test_store());

@@ -2,16 +2,18 @@
 //! species, gender, and passives become typed values; everything that
 //! cannot resolve is reported, never silently dropped.
 
-use pal_core::model::{Gender, PalDb, PalName, PassiveName};
+use pal_core::model::{Gender, IvSpread, IvValue, PalDb, PalName, PassiveName};
 
 use crate::level::RawCharacter;
 
-/// A pal imported from a save, in solver-ready terms.
+/// A pal imported from a save, in solver-ready terms. Absent talent
+/// fields import as zero IVs rather than skipping the pal.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ImportedPal {
     pub species: PalName,
     pub gender: Gender,
     pub passives: Vec<PassiveName>,
+    pub ivs: IvSpread,
 }
 
 /// Why a character entry did not become an [`ImportedPal`].
@@ -106,6 +108,11 @@ fn resolve(
         species: pal.name.clone(),
         gender,
         passives,
+        ivs: IvSpread {
+            hp: IvValue::from_save(character.talent_hp.unwrap_or(0)),
+            attack: IvValue::from_save(character.talent_shot.unwrap_or(0)),
+            defense: IvValue::from_save(character.talent_defense.unwrap_or(0)),
+        },
     })
 }
 
@@ -138,8 +145,21 @@ mod tests {
             character_id: Some(id.to_owned()),
             gender: Some(gender.to_owned()),
             passives: passives.iter().map(|p| (*p).to_owned()).collect(),
-            is_player: false,
+            ..RawCharacter::default()
         }
+    }
+
+    #[test]
+    fn talents_import_as_ivs_clamped_and_defaulted() {
+        let mut character = raw("SheepBall", "EPalGenderType::Male", &[]);
+        character.talent_hp = Some(85);
+        character.talent_shot = Some(250);
+        let report = import_pals(pal_db(), &[character]);
+
+        let ivs = report.pals[0].ivs;
+        assert_eq!(ivs.hp.get(), 85);
+        assert_eq!(ivs.attack.get(), 100);
+        assert_eq!(ivs.defense.get(), 0);
     }
 
     #[test]

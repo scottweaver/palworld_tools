@@ -10,10 +10,11 @@
 //! species = "Lamball"
 //! gender = "male"
 //! passives = ["Swift"]
+//! ivs = { hp = 85, attack = 92, defense = 70 }  # optional; 0 if omitted
 //! ```
 
 use anyhow::{Context, Result, bail};
-use pal_core::model::{Gender, PalDb};
+use pal_core::model::{Gender, IvSpread, PalDb};
 use pal_solver::search::OwnedPal;
 use serde::Deserialize;
 
@@ -29,6 +30,8 @@ struct RawPal {
     gender: String,
     #[serde(default)]
     passives: Vec<String>,
+    #[serde(default)]
+    ivs: IvSpread,
 }
 
 pub fn parse(text: &str, db: &PalDb) -> Result<Vec<OwnedPal>> {
@@ -58,6 +61,7 @@ fn resolve(raw: &RawPal, db: &PalDb) -> Result<OwnedPal> {
         species: pal.name.clone(),
         gender,
         passives,
+        ivs: raw.ivs,
     })
 }
 
@@ -76,6 +80,7 @@ mod tests {
             species = "lamball"
             gender = "M"
             passives = ["swift"]
+            ivs = { hp = 85, attack = 92 }
 
             [[pals]]
             species = "PinkCat"
@@ -89,7 +94,22 @@ mod tests {
         assert_eq!(pals[0].species, PalName::new("SheepBall"));
         assert_eq!(pals[0].gender, Gender::Male);
         assert_eq!(pals[0].passives.len(), 1);
+        assert_eq!(pals[0].ivs.hp.get(), 85);
+        assert_eq!(pals[0].ivs.attack.get(), 92);
+        assert_eq!(pals[0].ivs.defense.get(), 0);
         assert_eq!(pals[1].species, PalName::new("PinkCat"));
+        assert_eq!(pals[1].ivs, pal_core::model::IvSpread::default());
+    }
+
+    #[test]
+    fn out_of_range_ivs_are_rejected() {
+        let f = fixture();
+        let error = parse(
+            "[[pals]]\nspecies = \"Lamball\"\ngender = \"male\"\nivs = { hp = 101 }\n",
+            f.db,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("TOML"));
     }
 
     #[test]
