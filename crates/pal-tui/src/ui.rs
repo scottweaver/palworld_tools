@@ -156,17 +156,10 @@ fn scroll_offset(selected: usize, height: usize) -> usize {
 }
 
 fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
-    let target = app
-        .target
-        .as_ref()
-        .map_or("none", |name| display(app.db(), name));
     let title = if app.progenitors.is_empty() {
-        format!(" Pals — target: {target} ")
+        " Pals ".to_owned()
     } else {
-        format!(
-            " Pals — target: {target} · progenitors: {} ",
-            app.progenitors.len()
-        )
+        format!(" Pals — progenitors: {} ", app.progenitors.len())
     };
     let rows = app.species_rows();
     let items: Vec<ListItem> = rows
@@ -242,7 +235,14 @@ fn draw_filterable_list(
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
     let wild = if app.allow_wild { "on" } else { "off" };
-    let title = format!(" Plans — depth ≤ {} · wild {wild} ", app.max_breeding_steps);
+    let target = app
+        .target
+        .as_ref()
+        .map_or("no target", |name| display(app.db(), name));
+    let title = format!(
+        " Plans — {target} · depth ≤ {} · wild {wild} ",
+        app.max_breeding_steps
+    );
     let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -541,6 +541,7 @@ mod tests {
         assert!(rendered.contains("Pals"));
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
+        assert!(rendered.contains("no target"));
         assert!(rendered.contains("depth"));
         assert!(rendered.contains("wild off"));
         assert!(rendered.contains("Lamball"));
