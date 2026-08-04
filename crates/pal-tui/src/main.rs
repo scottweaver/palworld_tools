@@ -73,10 +73,18 @@ fn main() -> Result<()> {
         ),
     };
 
-    let plans_path = std::path::PathBuf::from("plans.json");
+    let plans_path = plan_store::stable_path();
+    let migrated = plan_store::migrate_legacy(std::path::Path::new("plans.json"), &plans_path)
+        .unwrap_or(false);
     let (saved, store_note) = match plan_store::PlanStore::load(plans_path.clone()) {
         Ok(store) => {
-            let note = if store.plans.is_empty() {
+            let note = if migrated {
+                format!(
+                    "; migrated {} saved plan(s) to {}",
+                    store.plans.len(),
+                    plans_path.display()
+                )
+            } else if store.plans.is_empty() {
                 String::new()
             } else {
                 format!(

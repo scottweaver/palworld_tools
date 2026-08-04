@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1.0"
+dirs = "6.0.0"
 pal-core = { workspace = true, features = ["vendored-data"] }
 pal-save.workspace = true
 pal-solver.workspace = true

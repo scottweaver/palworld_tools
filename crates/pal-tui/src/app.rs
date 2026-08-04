@@ -303,7 +303,11 @@ impl<'db> App<'db> {
             self.saved_cursor = self
                 .saved_cursor
                 .min(self.saved.plans.len().saturating_sub(1));
-            self.status = format!("library: {} saved plan(s)", self.saved.plans.len());
+            self.status = format!(
+                "library: {} saved plan(s) · {}",
+                self.saved.plans.len(),
+                self.saved.path().display()
+            );
         } else {
             "live plans".clone_into(&mut self.status);
         }

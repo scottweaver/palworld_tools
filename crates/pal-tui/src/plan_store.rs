@@ -1,9 +1,10 @@
-//! The saved-plan library: a `plans.json` beside the app (like
-//! `pals.toml`). Saved plans are fully self-describing — the whole
-//! tree with species, genders, and passives inline — so they remain
-//! readable as the owned pool changes underneath them.
+//! The saved-plan library, persisted at a stable per-user location
+//! (the platform data directory) so it survives launching the app
+//! from any working directory. Saved plans are fully self-describing
+//! — the whole tree with species, genders, and passives inline — so
+//! they remain readable as the owned pool changes underneath them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use pal_core::model::{PalName, PassiveName};
@@ -30,6 +31,31 @@ pub struct PlanStore {
     pub plans: Vec<SavedPlan>,
 }
 
+/// The stable library location: `<platform data dir>/palworld_tools/
+/// plans.json` (macOS: `~/Library/Application Support/…`), falling
+/// back to the working directory when no data dir exists.
+#[must_use]
+pub fn stable_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("palworld_tools")
+        .join("plans.json")
+}
+
+/// Moves a legacy working-directory store to the stable path — the
+/// one-time fix-up for libraries written before the location became
+/// stable. No-op unless `legacy` exists and `stable` does not.
+pub fn migrate_legacy(legacy: &Path, stable: &Path) -> std::io::Result<bool> {
+    if !legacy.exists() || stable.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = stable.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(legacy, stable)?;
+    Ok(true)
+}
+
 impl PlanStore {
     /// An empty store that will write to `path` on first save.
     #[must_use]
@@ -38,6 +64,12 @@ impl PlanStore {
             path,
             plans: Vec::new(),
         }
+    }
+
+    /// Where this store persists.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Loads the store, tolerating a missing file. An unparsable file
@@ -140,6 +172,36 @@ mod tests {
         assert_eq!(reloaded.plans[0].label, "second");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_stores_migrate_once_and_never_clobber() {
+        let legacy = scratch_path("legacy.json");
+        let stable = scratch_path("stable-dir").join("plans.json");
+        let _ = std::fs::remove_file(&legacy);
+        let _ = std::fs::remove_dir_all(stable.parent().unwrap());
+
+        // Nothing to migrate.
+        assert!(!migrate_legacy(&legacy, &stable).unwrap());
+
+        // A legacy store moves into place (creating the directory).
+        let mut store = PlanStore::load(legacy.clone()).unwrap();
+        store.add(sample("legacy")).unwrap();
+        assert!(migrate_legacy(&legacy, &stable).unwrap());
+        assert!(!legacy.exists());
+        assert_eq!(PlanStore::load(stable.clone()).unwrap().plans.len(), 1);
+
+        // A second legacy file never overwrites the stable store.
+        let mut store = PlanStore::load(legacy.clone()).unwrap();
+        store.add(sample("newer")).unwrap();
+        assert!(!migrate_legacy(&legacy, &stable).unwrap());
+        assert_eq!(
+            PlanStore::load(stable.clone()).unwrap().plans[0].label,
+            "legacy"
+        );
+
+        let _ = std::fs::remove_file(&legacy);
+        let _ = std::fs::remove_dir_all(stable.parent().unwrap());
     }
 
     #[test]

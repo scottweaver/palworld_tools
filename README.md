@@ -157,9 +157,14 @@ so prefer un-anchored searches for passive goals.
 ### The saved-plan library
 
 Found a plan you'll execute over several play sessions? `F8` saves
-the highlighted plan into `plans.json` (created next to the app,
-like `pals.toml`). `F9` flips the Plans pane to the library, where
-`↑`/`↓`/click browse and `Delete` removes the highlighted entry.
+the highlighted plan into your library. It lives at a stable
+per-user path regardless of where you launch from — macOS:
+`~/Library/Application Support/palworld_tools/plans.json`, Linux:
+`~/.local/share/palworld_tools/plans.json`, Windows:
+`%LOCALAPPDATA%\palworld_tools\plans.json` (a legacy `./plans.json`
+migrates there automatically; `F9`'s status line shows the exact
+path). `F9` flips the Plans pane to the library, where `↑`/`↓`/click
+browse and `Ctrl+D`/`Backspace` removes the highlighted entry.
 Saved plans are fully self-contained — the whole tree with species,
 genders, and passives — so they stay readable even after your box
 changes.
