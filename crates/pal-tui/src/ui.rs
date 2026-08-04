@@ -1,7 +1,8 @@
 //! Rendering: pure projection of [`crate::app::App`] state onto
 //! ratatui widgets. No state lives here.
 
-use pal_core::model::{Gender, PalDb, PalName, PassiveName};
+use pal_core::model::{Gender, IvValue, PalDb, PalName, PassiveName};
+use pal_solver::iv::IvThresholds;
 use pal_solver::search::PlanNode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
@@ -55,7 +56,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
+            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · h/a/d IV min (⇧ lowers) · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,
@@ -262,7 +263,11 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
                         ))
                     };
                     let mut lines = vec![banner];
-                    lines.extend(plan_tree(app.db(), &plan.root));
+                    lines.extend(plan_tree(
+                        app.db(),
+                        &plan.root,
+                        !plan.goal_iv_thresholds.is_empty(),
+                    ));
                     lines
                 },
             );
@@ -274,8 +279,9 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
             .as_ref()
             .map_or("no target", |name| display(app.db(), name));
         let title = format!(
-            " Plans — {target} · depth ≤ {} · wild {wild} ",
-            app.max_breeding_steps
+            " Plans — {target} · depth ≤ {} · wild {wild}{} ",
+            app.max_breeding_steps,
+            iv_title(app.iv_thresholds)
         );
         let items = app
             .plans
@@ -292,7 +298,7 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
             .collect();
         let detail = app.plans.get(app.plan_cursor).map_or_else(
             || vec![Line::from("run a search (F5) to see plans")],
-            |plan| plan_tree(app.db(), &plan.root),
+            |plan| plan_tree(app.db(), &plan.root, !app.iv_thresholds.is_empty()),
         );
         (title, items, app.plan_cursor, detail)
     };
@@ -333,15 +339,33 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 ///    ├─ ♂ ⭐ Anubis · your progenitor
 ///    ╰─ ♀ 🌿 Cattiva · catch
 /// ```
-fn plan_tree(db: &PalDb, root: &PlanNode) -> Vec<Line<'static>> {
+fn plan_tree(db: &PalDb, root: &PlanNode, show_ivs: bool) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    tree_lines(db, root, "", "", None, &mut lines);
+    tree_lines(db, root, show_ivs, "", "", None, &mut lines);
     lines
+}
+
+/// Title segment for active IV minimums, hp/attack/defense order,
+/// `–` for stats without one; empty when none are set.
+fn iv_title(thresholds: IvThresholds) -> String {
+    if thresholds.is_empty() {
+        return String::new();
+    }
+    let part = |threshold: Option<IvValue>| {
+        threshold.map_or_else(|| "–".to_owned(), |minimum| minimum.get().to_string())
+    };
+    format!(
+        " · IV ≥ {}/{}/{}",
+        part(thresholds.hp),
+        part(thresholds.attack),
+        part(thresholds.defense)
+    )
 }
 
 fn tree_lines(
     db: &PalDb,
     node: &PlanNode,
+    show_ivs: bool,
     prefix: &str,
     connector: &str,
     role: Option<Gender>,
@@ -353,7 +377,21 @@ fn tree_lines(
         Some(Gender::Female) => "♀ ",
     };
     let (icon, species, annotation) = match node {
-        PlanNode::Owned(pal) => ("🎒", &pal.species, passive_spans(db, &pal.passives, "")),
+        PlanNode::Owned(pal) => {
+            let mut spans = passive_spans(db, &pal.passives, "");
+            if show_ivs {
+                spans.push(Span::styled(
+                    format!(
+                        " · IVs {}/{}/{}",
+                        pal.ivs.hp.get(),
+                        pal.ivs.attack.get(),
+                        pal.ivs.defense.get()
+                    ),
+                    Style::new().add_modifier(Modifier::DIM),
+                ));
+            }
+            ("🎒", &pal.species, spans)
+        }
         PlanNode::Wild(species) => ("🌿", species, vec![Span::raw(" · catch")]),
         PlanNode::Progenitor(species) => ("⭐", species, vec![Span::raw(" · your progenitor")]),
         PlanNode::Bred(bred) => (
@@ -381,6 +419,7 @@ fn tree_lines(
         tree_lines(
             db,
             &bred.male,
+            show_ivs,
             &child_prefix,
             "├─ ",
             Some(Gender::Male),
@@ -389,6 +428,7 @@ fn tree_lines(
         tree_lines(
             db,
             &bred.female,
+            show_ivs,
             &child_prefix,
             "╰─ ",
             Some(Gender::Female),
@@ -443,7 +483,7 @@ fn display_passive(db: &PalDb, name: &pal_core::model::PassiveName) -> String {
 mod tests {
     use super::*;
     use crate::test_support::{fixture, test_store};
-    use pal_core::model::PassiveName;
+    use pal_core::model::{IvSpread, PassiveName};
     use pal_solver::search::{BredNode, OwnedPal};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -458,6 +498,7 @@ mod tests {
                 species: PalName::new("SheepBall"),
                 gender: pal_core::model::Gender::Male,
                 passives: vec![PassiveName::new("Swift")],
+                ivs: IvSpread::default(),
             }),
             female: PlanNode::Bred(Box::new(BredNode {
                 species: PalName::new("DreamDemon"),
@@ -467,7 +508,7 @@ mod tests {
             })),
         }));
 
-        let rendered: Vec<String> = plan_tree(f.db, &plan)
+        let rendered: Vec<String> = plan_tree(f.db, &plan, false)
             .iter()
             .map(|line| {
                 line.spans
@@ -556,8 +597,9 @@ mod tests {
             species: PalName::new("SheepBall"),
             gender: pal_core::model::Gender::Male,
             passives: vec![rainbow.name.clone()],
+            ivs: IvSpread::default(),
         });
-        let lines = plan_tree(f.db, &plan);
+        let lines = plan_tree(f.db, &plan, false);
         let rainbow_span = lines[0]
             .spans
             .iter()

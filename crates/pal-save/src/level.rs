@@ -21,6 +21,7 @@ use gvas::error::{DeserializeError, Error as GvasError};
 use gvas::game_version::GameVersion;
 use gvas::properties::Property;
 use gvas::properties::array_property::ArrayProperty;
+use gvas::properties::int_property::BytePropertyValue;
 use gvas::properties::map_property::MapProperty;
 use gvas::properties::struct_property::{StructProperty, StructPropertyValue};
 use gvas::types::map::HashableIndexMap;
@@ -38,11 +39,18 @@ pub enum SaveError {
 }
 
 /// One entry of `CharacterSaveParameterMap`, still in wire terms.
+/// Talents are the game's IV fields (`Talent_HP`/`Talent_Shot`/
+/// `Talent_Defense` — attack is `Shot`; the vestigial `Talent_Melee`
+/// is not extracted); absent means the field was missing or not an
+/// int, which import treats as zero.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RawCharacter {
     pub character_id: Option<String>,
     pub gender: Option<String>,
     pub passives: Vec<String>,
+    pub talent_hp: Option<i64>,
+    pub talent_shot: Option<i64>,
+    pub talent_defense: Option<i64>,
     pub is_player: bool,
 }
 
@@ -435,6 +443,23 @@ fn populate(character: &mut RawCharacter, fields: &HashableIndexMap<String, Vec<
         Some(Property::ArrayProperty(array)) => name_array(array),
         _ => Vec::new(),
     };
+    character.talent_hp = int_value(first(fields, "Talent_HP"));
+    character.talent_shot = int_value(first(fields, "Talent_Shot"));
+    character.talent_defense = int_value(first(fields, "Talent_Defense"));
+}
+
+/// Talents arrive as `ByteProperty` in current saves (values fit
+/// 0..=100); older eras used `IntProperty`. Anything else is treated
+/// as absent.
+fn int_value(property: Option<&Property>) -> Option<i64> {
+    match property {
+        Some(Property::IntProperty(int)) => Some(i64::from(int.value)),
+        Some(Property::ByteProperty(byte)) => match byte.value {
+            BytePropertyValue::Byte(value) => Some(i64::from(value)),
+            BytePropertyValue::Namespaced(_) => None,
+        },
+        _ => None,
+    }
 }
 
 fn name_array(array: &ArrayProperty) -> Vec<String> {

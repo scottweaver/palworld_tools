@@ -2,8 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use pal_core::db;
-use pal_core::model::{BreedingDb, Gender, PalDb, PalName, PassiveName};
+use pal_core::model::{BreedingDb, Gender, IvSpread, PalDb, PalName, PassiveName};
 use pal_solver::child::ChildIndex;
+use pal_solver::iv::{IvOdds, IvThresholds};
 use pal_solver::passives::PassiveOdds;
 use pal_solver::search::{BreedingGoal, OwnedPal, PlanNode, SearchConfig, SearchError, find_paths};
 use pal_solver::steps::{MinStepsTable, SpeciesAdjacency};
@@ -20,6 +21,7 @@ struct Fixture {
     breeding: BreedingDb,
     index: ChildIndex,
     odds: PassiveOdds,
+    iv_odds: IvOdds,
 }
 
 fn fixture() -> Fixture {
@@ -27,11 +29,13 @@ fn fixture() -> Fixture {
     let breeding = db::parse_breeding_db(&data("breeding.json"), &pal_db).unwrap();
     let index = ChildIndex::build(&breeding).unwrap();
     let odds = PassiveOdds::from_mechanics(pal_db.mechanics()).unwrap();
+    let iv_odds = IvOdds::from_mechanics(pal_db.mechanics()).unwrap();
     Fixture {
         pal_db,
         breeding,
         index,
         odds,
+        iv_odds,
     }
 }
 
@@ -47,6 +51,7 @@ fn owned(species: &str, gender: Gender, passives: &[&str]) -> OwnedPal {
         species: PalName::new(species),
         gender,
         passives: passives.iter().copied().map(PassiveName::new).collect(),
+        ivs: IvSpread::default(),
     }
 }
 
@@ -55,6 +60,7 @@ fn goal(species: &str, passives: &[&str]) -> BreedingGoal {
         species: PalName::new(species),
         passives: passives.iter().copied().map(PassiveName::new).collect(),
         progenitors: Vec::new(),
+        iv_thresholds: IvThresholds::default(),
     }
 }
 
@@ -63,6 +69,7 @@ fn goal_from(species: &str, progenitors: &[&str]) -> BreedingGoal {
         species: PalName::new(species),
         passives: Vec::new(),
         progenitors: progenitors.iter().copied().map(PalName::new).collect(),
+        iv_thresholds: IvThresholds::default(),
     }
 }
 
@@ -113,6 +120,7 @@ fn owned_pal_already_satisfying_the_goal_is_a_zero_step_plan() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &["Swift"]),
         &CONFIG,
@@ -138,6 +146,7 @@ fn one_step_plan_without_passives_costs_one_egg() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &[]),
         &CONFIG,
@@ -166,6 +175,7 @@ fn one_step_plan_with_two_desired_passives_costs_the_inverse_probability() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &["Swift", "Brave"]),
         &CONFIG,
@@ -199,6 +209,7 @@ fn two_step_plan_pays_for_the_intermediate_gender_reroll() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("BluePlatypus", &[]),
         &CONFIG,
@@ -236,6 +247,7 @@ fn results_are_ranked_by_expected_eggs() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &[]),
         &CONFIG,
@@ -256,6 +268,7 @@ fn progenitor_anubis_reaches_knocklem_in_one_step() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal_from("WingGolem", &["Anubis"]),
         &WILD_CONFIG,
@@ -283,6 +296,7 @@ fn progenitor_azurmane_reaches_knocklem() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal_from("WingGolem", &["BlueThunderHorse"]),
         &WILD_CONFIG,
@@ -303,6 +317,7 @@ fn every_plan_includes_all_required_progenitors() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal_from("BluePlatypus", &["SheepBall", "PinkCat"]),
         &WILD_CONFIG,
@@ -326,6 +341,7 @@ fn progenitor_validation_rejects_bad_inputs() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &[],
             &goal_from("WingGolem", &["NotAPal"]),
             &WILD_CONFIG
@@ -338,6 +354,7 @@ fn progenitor_validation_rejects_bad_inputs() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &[],
             &goal_from("WingGolem", &["Anubis", "Anubis"]),
             &WILD_CONFIG
@@ -351,6 +368,7 @@ fn progenitor_validation_rejects_bad_inputs() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &[],
             &goal_from("WingGolem", &nine),
             &WILD_CONFIG
@@ -367,6 +385,7 @@ fn wild_mode_offers_a_catch_plan_for_catchable_goals() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal("SheepBall", &[]),
         &WILD_CONFIG,
@@ -389,6 +408,7 @@ fn wild_partners_bridge_species_gaps() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &[]),
         &WILD_CONFIG,
@@ -415,6 +435,7 @@ fn wild_pals_contribute_no_passives() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal("SheepBall", &["Swift"]),
         &WILD_CONFIG,
@@ -438,6 +459,7 @@ fn species_without_wild_spawns_are_never_caught() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &[],
         &goal("NightLady", &[]),
         &WILD_CONFIG,
@@ -455,6 +477,7 @@ fn goal_out_of_reach_returns_no_plans() {
         &f.pal_db,
         &f.index,
         &f.odds,
+        &f.iv_odds,
         &pool,
         &goal("DreamDemon", &[]),
         &CONFIG,
@@ -473,6 +496,7 @@ fn invalid_inputs_are_rejected() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &pool,
             &goal("NotAPal", &[]),
             &CONFIG
@@ -485,6 +509,7 @@ fn invalid_inputs_are_rejected() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &[owned("NotAPal", Gender::Male, &[])],
             &goal("DreamDemon", &[]),
             &CONFIG
@@ -497,6 +522,7 @@ fn invalid_inputs_are_rejected() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &pool,
             &goal("DreamDemon", &["Swift", "Swift"]),
             &CONFIG
@@ -509,6 +535,7 @@ fn invalid_inputs_are_rejected() {
             &f.pal_db,
             &f.index,
             &f.odds,
+            &f.iv_odds,
             &pool,
             &goal("DreamDemon", &["a", "b", "c", "d", "e"]),
             &CONFIG
@@ -516,4 +543,166 @@ fn invalid_inputs_are_rejected() {
         .unwrap_err(),
         SearchError::TooManyDesired { count: 5 }
     );
+}
+
+fn iv(value: u8) -> pal_core::model::IvValue {
+    pal_core::model::IvValue::try_from(value).unwrap()
+}
+
+fn owned_iv(species: &str, gender: Gender, hp: u8, attack: u8, defense: u8) -> OwnedPal {
+    OwnedPal {
+        ivs: IvSpread {
+            hp: iv(hp),
+            attack: iv(attack),
+            defense: iv(defense),
+        },
+        ..owned(species, gender, &[])
+    }
+}
+
+fn goal_with_ivs(
+    species: &str,
+    hp: Option<u8>,
+    attack: Option<u8>,
+    defense: Option<u8>,
+) -> BreedingGoal {
+    BreedingGoal {
+        iv_thresholds: IvThresholds {
+            hp: hp.map(iv),
+            attack: attack.map(iv),
+            defense: defense.map(iv),
+        },
+        ..goal(species, &[])
+    }
+}
+
+#[test]
+fn owned_pal_meeting_iv_thresholds_is_a_zero_step_plan_and_below_is_not() {
+    let f = fixture();
+    let pool = [owned_iv("SheepBall", Gender::Female, 90, 0, 0)];
+
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("SheepBall", Some(80), None, None),
+        &CONFIG,
+    )
+    .unwrap();
+    assert_eq!(plans[0].steps, 0);
+
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("SheepBall", Some(95), None, None),
+        &CONFIG,
+    )
+    .unwrap();
+    assert!(plans.is_empty());
+}
+
+#[test]
+fn iv_threshold_met_by_both_parents_costs_the_desired_roll_only() {
+    let f = fixture();
+    // Both parents meet HP >= 80: P = 5/9 (no right-parent coin).
+    let pool = [
+        owned_iv("SheepBall", Gender::Male, 90, 0, 0),
+        owned_iv("PinkCat", Gender::Female, 85, 0, 0),
+    ];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("DreamDemon", Some(80), None, None),
+        &CONFIG,
+    )
+    .unwrap();
+    assert_eq!(plans[0].steps, 1);
+    assert_close(plans[0].expected_eggs, 9.0 / 5.0);
+}
+
+#[test]
+fn iv_threshold_met_by_one_parent_pays_the_right_parent_coin() {
+    let f = fixture();
+    // Only the male meets HP >= 80: P = 5/9 * 1/2 = 5/18.
+    let pool = [
+        owned_iv("SheepBall", Gender::Male, 90, 0, 0),
+        owned_iv("PinkCat", Gender::Female, 0, 0, 0),
+    ];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("DreamDemon", Some(80), None, None),
+        &CONFIG,
+    )
+    .unwrap();
+    assert_eq!(plans[0].steps, 1);
+    assert_close(plans[0].expected_eggs, 18.0 / 5.0);
+}
+
+#[test]
+fn iv_thresholds_split_across_parents_multiply_both_coins() {
+    let f = fixture();
+    // HP from the male, Attack from the female: P = 5/18 * 1/4 = 5/72.
+    let pool = [
+        owned_iv("SheepBall", Gender::Male, 90, 0, 0),
+        owned_iv("PinkCat", Gender::Female, 0, 80, 0),
+    ];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("DreamDemon", Some(80), Some(70), None),
+        &CONFIG,
+    )
+    .unwrap();
+    assert_eq!(plans[0].steps, 1);
+    assert_close(plans[0].expected_eggs, 72.0 / 5.0);
+}
+
+#[test]
+fn unsupplyable_iv_thresholds_yield_no_plans_and_wilds_do_not_help() {
+    let f = fixture();
+    // Nobody meets Defense >= 50: the stat is unsupplyable.
+    let pool = [
+        owned_iv("SheepBall", Gender::Male, 90, 0, 0),
+        owned_iv("PinkCat", Gender::Female, 85, 0, 0),
+    ];
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &pool,
+        &goal_with_ivs("DreamDemon", None, None, Some(50)),
+        &CONFIG,
+    )
+    .unwrap();
+    assert!(plans.is_empty());
+
+    // Wild pals guarantee nothing: a catchable target with any IV
+    // minimum cannot come from a wild catch.
+    let plans = find_paths(
+        &f.pal_db,
+        &f.index,
+        &f.odds,
+        &f.iv_odds,
+        &[],
+        &goal_with_ivs("SheepBall", Some(10), None, None),
+        &WILD_CONFIG,
+    )
+    .unwrap();
+    assert!(plans.is_empty());
 }

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use pal_core::model::{PalName, PassiveName};
+use pal_solver::iv::IvThresholds;
 use pal_solver::search::PlanNode;
 use serde::{Deserialize, Serialize};
 
@@ -16,10 +17,12 @@ pub struct SavedPlan {
     pub label: String,
     pub goal_species: PalName,
     pub goal_passives: Vec<PassiveName>,
-    /// Progenitor marks active when the plan was saved (defaulted so
-    /// stores written before this field existed still load).
+    /// Goal fields added after the store first shipped are defaulted
+    /// so older stores still load.
     #[serde(default)]
     pub goal_progenitors: Vec<PalName>,
+    #[serde(default)]
+    pub goal_iv_thresholds: IvThresholds,
     pub expected_eggs: f64,
     pub steps: usize,
     pub root: PlanNode,
@@ -125,7 +128,7 @@ impl PlanStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pal_core::model::Gender;
+    use pal_core::model::{Gender, IvSpread};
     use pal_solver::search::OwnedPal;
 
     fn scratch_path(name: &str) -> PathBuf {
@@ -138,12 +141,14 @@ mod tests {
             goal_species: PalName::new("DreamDemon"),
             goal_passives: vec![PassiveName::new("Runner")],
             goal_progenitors: Vec::new(),
+            goal_iv_thresholds: IvThresholds::default(),
             expected_eggs: 1.67,
             steps: 1,
             root: PlanNode::Owned(OwnedPal {
                 species: PalName::new("SheepBall"),
                 gender: Gender::Male,
                 passives: vec![PassiveName::new("Runner")],
+                ivs: IvSpread::default(),
             }),
         }
     }

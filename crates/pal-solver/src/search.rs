@@ -8,13 +8,16 @@
 //! number of breeding attempts across the whole plan.
 //!
 //! Cost model, per bred node: one egg succeeds when the child rolls
-//! every passive the node must carry (see [`crate::passives`]) and,
-//! when the node is later used as a gendered parent, the required
-//! gender. Bred intermediates are re-bred until they succeed, so
-//! obtaining one costs `parents' cost + 1 / (P(passives) · P(gender))`
+//! every passive the node must carry (see [`crate::passives`]), every
+//! supplyable goal IV minimum (see [`crate::iv`]), and, when the node
+//! is later used as a gendered parent, the required gender. Bred
+//! intermediates are re-bred until they succeed, so obtaining one
+//! costs `parents' cost + 1 / (P(passives) · P(IVs) · P(gender))`
 //! expected eggs; owned pals cost nothing. Goals may name required
 //! progenitors: candidate state then also tracks which progenitors a
-//! tree includes, and only fully-anchored plans are returned.
+//! tree includes, and only fully-anchored plans are returned. Goals
+//! may set IV minimums: candidate state tracks which minimums a
+//! tree's product meets, and only fully-met plans are returned.
 //! Simplifications versus palcalc: bred parents contribute exactly
 //! their carried passives to the child's inheritance pool, effort is
 //! measured in eggs rather than wall-clock time, and capture effort
@@ -33,23 +36,27 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use pal_core::model::{Gender, Pal, PalDb, PalName, PassiveName};
+use pal_core::model::{Gender, IvSpread, Pal, PalDb, PalName, PassiveName};
 use rayon::prelude::*;
 
 use crate::child::ChildIndex;
+use crate::iv::{IvOdds, IvThresholds};
 use crate::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
 use crate::steps::SpeciesAdjacency;
 
 /// A pal the player already has: the leaf material of every plan.
+/// `ivs` defaults for stores written before IVs were modeled.
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OwnedPal {
     pub species: PalName,
     pub gender: Gender,
     pub passives: Vec<PassiveName>,
+    #[serde(default)]
+    pub ivs: IvSpread,
 }
 
-/// What the search is for: a species, carrying all listed passives,
-/// bred from all listed progenitors.
+/// What the search is for: a species, carrying all listed passives
+/// and meeting all IV minimums, bred from all listed progenitors.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BreedingGoal {
     pub species: PalName,
@@ -57,8 +64,9 @@ pub struct BreedingGoal {
     /// Required anchor species: every returned plan must include each
     /// of these as a leaf at least once. Progenitors are available as
     /// free any-gender leaves regardless of wild spawns (the caller
-    /// has them), and carry no passives.
+    /// has them), and carry no passives and no IVs.
     pub progenitors: Vec<PalName>,
+    pub iv_thresholds: IvThresholds,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -144,6 +152,7 @@ pub struct Solver<'db> {
     pal_db: &'db PalDb,
     index: &'db ChildIndex,
     odds: &'db PassiveOdds,
+    iv_odds: &'db IvOdds,
     adjacency: SpeciesAdjacency,
     distance_cache: Mutex<HashMap<PalName, Arc<HashMap<PalName, u32>>>>,
 }
@@ -153,11 +162,17 @@ impl<'db> Solver<'db> {
     /// `pal_db`; species the index yields but `pal_db` lacks are
     /// skipped.
     #[must_use]
-    pub fn new(pal_db: &'db PalDb, index: &'db ChildIndex, odds: &'db PassiveOdds) -> Self {
+    pub fn new(
+        pal_db: &'db PalDb,
+        index: &'db ChildIndex,
+        odds: &'db PassiveOdds,
+        iv_odds: &'db IvOdds,
+    ) -> Self {
         Self {
             pal_db,
             index,
             odds,
+            iv_odds,
             adjacency: SpeciesAdjacency::build(pal_db, index),
             distance_cache: Mutex::new(HashMap::new()),
         }
@@ -216,7 +231,8 @@ impl<'db> Solver<'db> {
 
         let full = DesiredMask::full(goal.passives.len());
         let all_progenitors = DesiredMask::full(goal.progenitors.len());
-        let goal_state: BredState = (goal.species.clone(), full, all_progenitors);
+        let iv_full = DesiredMask::full(goal.iv_thresholds.active().len());
+        let goal_state: BredState = (goal.species.clone(), full, all_progenitors, iv_full);
 
         for _ in 0..config.max_breeding_steps {
             // Branch-and-bound: once `max_results` goal plans exist,
@@ -241,6 +257,7 @@ impl<'db> Solver<'db> {
                     pal_db: self.pal_db,
                     index: self.index,
                     odds: self.odds,
+                    iv_odds: self.iv_odds,
                     goal,
                     distance_to_goal: &distance_to_goal,
                     config,
@@ -257,7 +274,11 @@ impl<'db> Solver<'db> {
                     // `distance` further breeding steps, each of
                     // which costs at least one expected egg.
                     let remaining_steps = if child.species == goal.species {
-                        u32::from(child.carried != full || child.required != all_progenitors)
+                        u32::from(
+                            child.carried != full
+                                || child.required != all_progenitors
+                                || child.iv_met != iv_full,
+                        )
                     } else {
                         distance_to_goal
                             .get(&child.species)
@@ -278,32 +299,50 @@ impl<'db> Solver<'db> {
                 break;
             }
         }
-        let mut plans: Vec<BreedingPlan> = leaves
-            .iter()
-            .chain(buckets.values().flatten())
-            .filter(|id| {
-                let record = &arena[id.0];
-                record.species == goal.species
-                    && record.carried == full
-                    && record.required == all_progenitors
-            })
-            .map(|id| {
-                let record = &arena[id.0];
-                BreedingPlan {
-                    root: materialize(&arena, owned, *id),
-                    expected_eggs: record.root_cost(),
-                    steps: record.bred_count,
-                }
-            })
-            .collect();
-        plans.sort_by(|a, b| {
-            a.expected_eggs
-                .total_cmp(&b.expected_eggs)
-                .then(a.steps.cmp(&b.steps))
-        });
-        plans.truncate(config.max_results);
-        Ok(plans)
+        Ok(ranked_plans(
+            &arena,
+            owned,
+            leaves.iter().chain(buckets.values().flatten()),
+            &goal_state,
+            config.max_results,
+        ))
     }
+}
+
+/// Materializes every candidate matching the goal state, ranked by
+/// expected eggs (ties to fewer steps), truncated to `max_results`.
+fn ranked_plans<'a>(
+    arena: &[Record],
+    owned: &[OwnedPal],
+    candidates: impl Iterator<Item = &'a RecordId>,
+    goal_state: &BredState,
+    max_results: usize,
+) -> Vec<BreedingPlan> {
+    let (species, full, all_progenitors, iv_full) = goal_state;
+    let mut plans: Vec<BreedingPlan> = candidates
+        .filter(|id| {
+            let record = &arena[id.0];
+            record.species == *species
+                && record.carried == *full
+                && record.required == *all_progenitors
+                && record.iv_met == *iv_full
+        })
+        .map(|id| {
+            let record = &arena[id.0];
+            BreedingPlan {
+                root: materialize(arena, owned, *id),
+                expected_eggs: record.root_cost(),
+                steps: record.bred_count,
+            }
+        })
+        .collect();
+    plans.sort_by(|a, b| {
+        a.expected_eggs
+            .total_cmp(&b.expected_eggs)
+            .then(a.steps.cmp(&b.steps))
+    });
+    plans.truncate(max_results);
+    plans
 }
 
 /// One-shot convenience over [`Solver`]. Prefer holding a `Solver`
@@ -317,11 +356,12 @@ pub fn find_paths(
     pal_db: &PalDb,
     index: &ChildIndex,
     odds: &PassiveOdds,
+    iv_odds: &IvOdds,
     owned: &[OwnedPal],
     goal: &BreedingGoal,
     config: &SearchConfig,
 ) -> Result<Vec<BreedingPlan>, SearchError> {
-    Solver::new(pal_db, index, odds).find_paths(owned, goal, config)
+    Solver::new(pal_db, index, odds, iv_odds).find_paths(owned, goal, config)
 }
 
 fn validate(pal_db: &PalDb, owned: &[OwnedPal], goal: &BreedingGoal) -> Result<(), SearchError> {
@@ -398,6 +438,14 @@ impl DesiredMask {
         Self(self.0 | other.0)
     }
 
+    fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    fn symmetric_difference(self, other: Self) -> Self {
+        Self(self.0 ^ other.0)
+    }
+
     fn names(self, desired: &[PassiveName]) -> Vec<PassiveName> {
         desired
             .iter()
@@ -440,8 +488,8 @@ enum Source {
 }
 
 /// Beam-pruning state: bred candidates compete within their
-/// (species, carried, required) bucket.
-type BredState = (PalName, DesiredMask, DesiredMask);
+/// (species, carried, required, iv-met) bucket.
+type BredState = (PalName, DesiredMask, DesiredMask, DesiredMask);
 
 #[derive(Clone, Debug)]
 struct Record {
@@ -450,6 +498,10 @@ struct Record {
     gender: GenderAvailability,
     carried: DesiredMask,
     required: DesiredMask,
+    /// Active goal IV minimums this candidate meets. For bred pals
+    /// this is every stat either parent met: a successful hatch
+    /// inherited each such stat from a parent at/above the minimum.
+    iv_met: DesiredMask,
     /// Distinct passives this candidate contributes to a child's
     /// inheritance pool: everything an owned pal has, exactly the
     /// carried set for a bred pal, nothing for wilds and progenitors.
@@ -496,11 +548,23 @@ fn leaf_record(source: Source, species: PalName, gender: GenderAvailability) -> 
         gender,
         carried: DesiredMask::empty(),
         required: DesiredMask::empty(),
+        iv_met: DesiredMask::empty(),
         contribution: Vec::new(),
         parents_cost: 0.0,
         egg_p: 1.0,
         bred_count: 0,
     }
+}
+
+/// Which active goal minimums `ivs` meets, one bit per active stat.
+fn iv_mask(thresholds: IvThresholds, ivs: IvSpread) -> DesiredMask {
+    let mut mask = DesiredMask::empty();
+    for (position, (stat, minimum)) in thresholds.active().into_iter().enumerate() {
+        if ivs.get(stat) >= minimum {
+            mask = mask.union(DesiredMask::single(position));
+        }
+    }
+    mask
 }
 
 /// Seeds the arena: owned pals, then progenitors, then (when enabled)
@@ -516,6 +580,7 @@ fn seed_leaves(
 ) {
     arena.extend(owned.iter().enumerate().map(|(position, pal)| Record {
         carried: DesiredMask::of(&goal.passives, &pal.passives),
+        iv_met: iv_mask(goal.iv_thresholds, pal.ivs),
         contribution: distinct(&pal.passives),
         ..leaf_record(
             Source::Owned(position),
@@ -561,6 +626,7 @@ struct ExpandContext<'a> {
     pal_db: &'a PalDb,
     index: &'a ChildIndex,
     odds: &'a PassiveOdds,
+    iv_odds: &'a IvOdds,
     goal: &'a BreedingGoal,
     distance_to_goal: &'a HashMap<PalName, u32>,
     config: &'a SearchConfig,
@@ -718,13 +784,25 @@ fn breed(
 
     let carried = male.carried.union(female.carried);
     let pool = merged_pool(&male.contribution, &female.contribution);
-    let egg_p: f64 = (carried.count()..=MAX_TOTAL_PASSIVES)
+    let passives_p: f64 = (carried.count()..=MAX_TOTAL_PASSIVES)
         .map(|num_final| {
             context
                 .odds
                 .exact_total_probability(pool.len(), carried.count(), num_final)
         })
         .sum();
+
+    // A successful egg also inherits every supplyable goal IV: stats
+    // met by one parent flip the extra right-parent coin, stats met
+    // by both do not (see crate::iv).
+    let iv_met = male.iv_met.union(female.iv_met);
+    let both_met = male.iv_met.intersection(female.iv_met);
+    let single_met = male.iv_met.symmetric_difference(female.iv_met);
+    let iv_p = context
+        .iv_odds
+        .pair_probability(single_met.count(), both_met.count());
+
+    let egg_p = passives_p * iv_p;
     if egg_p <= 0.0 {
         return None;
     }
@@ -741,6 +819,7 @@ fn breed(
         },
         carried,
         required: male.required.union(female.required),
+        iv_met,
         contribution: carried.names(&context.goal.passives),
         parents_cost: male_cost + female_cost,
         egg_p,
@@ -757,7 +836,12 @@ fn insert_pruned(
     record: Record,
     beam: usize,
 ) -> Option<RecordId> {
-    let key = (record.species.clone(), record.carried, record.required);
+    let key = (
+        record.species.clone(),
+        record.carried,
+        record.required,
+        record.iv_met,
+    );
     let bucket = buckets.entry(key).or_default();
     if bucket.len() < beam {
         let id = RecordId(arena.len());

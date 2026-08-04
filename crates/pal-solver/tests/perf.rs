@@ -13,6 +13,7 @@ use std::time::Instant;
 use pal_core::db;
 use pal_core::model::PalName;
 use pal_solver::child::ChildIndex;
+use pal_solver::iv::{IvOdds, IvThresholds};
 use pal_solver::passives::PassiveOdds;
 use pal_solver::search::{BreedingGoal, SearchConfig, Solver};
 
@@ -30,6 +31,7 @@ fn deep_progenitor_search_timing() {
     let breeding = db::parse_breeding_db(&data("breeding.json"), &pal_db).unwrap();
     let index = ChildIndex::build(&breeding).unwrap();
     let odds = PassiveOdds::from_mechanics(pal_db.mechanics()).unwrap();
+    let iv_odds = IvOdds::from_mechanics(pal_db.mechanics()).unwrap();
 
     let goal = BreedingGoal {
         species: PalName::new("WingGolem"),
@@ -39,6 +41,7 @@ fn deep_progenitor_search_timing() {
             PalName::new("PinkCat"),
             PalName::new("BlueThunderHorse"),
         ],
+        iv_thresholds: IvThresholds::default(),
     };
     let config = SearchConfig {
         max_breeding_steps: 6,
@@ -47,7 +50,7 @@ fn deep_progenitor_search_timing() {
     };
 
     let setup = Instant::now();
-    let solver = Solver::new(&pal_db, &index, &odds);
+    let solver = Solver::new(&pal_db, &index, &odds, &iv_odds);
     println!("solver setup: {:?}", setup.elapsed());
 
     for depth in [6, 12, 20, 32] {

@@ -6,10 +6,16 @@
 //!   cargo test --release -p pal-tui --test repro -- --ignored --nocapture
 //! ```
 
-use pal_core::model::PalName;
+use pal_core::model::{IvSpread, PalName};
 use pal_solver::child::ChildIndex;
+use pal_solver::iv::{IvOdds, IvThresholds};
 use pal_solver::passives::PassiveOdds;
 use pal_solver::search::{BreedingGoal, OwnedPal, PlanNode, SearchConfig, Solver};
+
+fn probe_iv(var: &str) -> Option<pal_core::model::IvValue> {
+    let value = std::env::var(var).ok()?.parse::<u8>().expect("0..=100");
+    Some(pal_core::model::IvValue::try_from(value).expect("0..=100"))
+}
 
 fn describe(node: &PlanNode, depth: usize, out: &mut Vec<String>) {
     let indent = "  ".repeat(depth);
@@ -42,7 +48,8 @@ fn reproduce_search_from_save() {
     let breeding = pal_core::vendored::breeding_db(&db).unwrap();
     let index = ChildIndex::build(&breeding).unwrap();
     let odds = PassiveOdds::from_mechanics(db.mechanics()).unwrap();
-    let solver = Solver::new(&db, &index, &odds);
+    let iv_odds = IvOdds::from_mechanics(db.mechanics()).unwrap();
+    let solver = Solver::new(&db, &index, &odds, &iv_odds);
 
     let bytes = std::fs::read(&save_path).unwrap();
     let save = pal_save::level::read_level_sav(&bytes).unwrap();
@@ -53,6 +60,7 @@ fn reproduce_search_from_save() {
             species: pal.species,
             gender: pal.gender,
             passives: pal.passives,
+            ivs: pal.ivs,
         };
         if !owned.contains(&candidate) {
             owned.push(candidate);
@@ -75,6 +83,7 @@ fn reproduce_search_from_save() {
             species,
             gender,
             passives,
+            ivs: IvSpread::default(),
         };
         println!("injected hypothetical: {extra:?}");
         owned.push(extra);
@@ -113,6 +122,11 @@ fn reproduce_search_from_save() {
         species: PalName::new(target.as_str()),
         passives: desired.clone(),
         progenitors: Vec::new(),
+        iv_thresholds: IvThresholds {
+            hp: probe_iv("PROBE_IV_HP"),
+            attack: probe_iv("PROBE_IV_ATTACK"),
+            defense: probe_iv("PROBE_IV_DEFENSE"),
+        },
     };
 
     // Independent oracle: brute-force owned male x female pairs whose

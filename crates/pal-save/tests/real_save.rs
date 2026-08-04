@@ -59,6 +59,17 @@ fn real_save_imports() {
         "a real box always holds pals with passives — extraction is silently empty"
     );
 
+    let with_ivs = report
+        .pals
+        .iter()
+        .filter(|pal| pal.ivs != pal_core::model::IvSpread::default())
+        .count();
+    println!("{with_ivs} pal(s) with nonzero IVs");
+    assert!(
+        with_ivs > 0,
+        "a real box always holds pals with nonzero IVs — talent extraction is silently empty"
+    );
+
     let mut by_species: BTreeMap<&str, usize> = BTreeMap::new();
     for pal in &report.pals {
         *by_species.entry(pal.species.as_str()).or_default() += 1;
