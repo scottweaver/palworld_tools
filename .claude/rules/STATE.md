@@ -43,15 +43,16 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `6496567`, CI green, 47 tests |
+| `main` | trunk | at `8d299d8`, CI green, 47 tests |
+| `feat/save-import` | pal-save crate: Level.sav → owned pals | local, 53 tests green, awaiting real-save validation |
 
 ## Next up
 
-1. Save-file import (pal-save crate) — declared next 2026-08-03.
-   Opening the save-file boundary is **structural**: ARCHITECTURE.md
-   must be updated in the same PR, and the approach (GVAS parsing
-   dependency vs port, extraction scope, TUI integration) gets a
-   design dialog first.
+1. Save-file import: validate `feat/save-import` against the user's
+   real Level.sav (harness: `tests/real_save.rs` + PAL_SAVE_PATH),
+   graduate any discovered hints into SEED_HINTS, then PR. Design
+   decisions 2026-08-03: gvas crate + own layer; TUI auto-detects
+   .sav at the existing pool argument; all guild-owned pals import.
 2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs.
 3. Solver refinements toward palcalc parity (IVs, time-based effort,
@@ -65,6 +66,17 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Save-file import built (pal-save crate).**
+  `Level.sav` → typed pals: gvas crate parses the Palworld container
+  natively; `level.rs` extracts `CharacterSaveParameterMap` raw
+  blobs with **self-discovering struct hints** (MissingHint errors
+  drive retry, Guid backtracking, discovered hints reported);
+  `import.rs` resolves species (BOSS_/role prefixes stripped),
+  gender, and passives against PalDb with a full skip report. TUI
+  pool argument auto-detects .sav vs toml. ARCHITECTURE boundary
+  opened in-branch. Why: real pools, not hand-typed toml. Risk:
+  synthetic tests only so far — real-save validation pending
+  (harness ready, needs PAL_SAVE_PATH).
 - **2026-08-03 — Search rewritten for speed.** `Solver` struct
   (adjacency precomputed once, per-goal distance memo); append-only
   record arena (plan trees materialized only for results, never

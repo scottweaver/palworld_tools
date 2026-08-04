@@ -27,8 +27,31 @@ fn main() -> Result<()> {
     let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
     let solver = Solver::new(&db, &index, &odds);
 
-    let (owned, pool_status) = match std::fs::read_to_string(&pals_path) {
-        Ok(text) => {
+    let (owned, pool_status) = match std::fs::read(&pals_path) {
+        Ok(bytes) if pal_save::looks_like_sav(&bytes) => {
+            let save = pal_save::level::read_level_sav(&bytes)
+                .with_context(|| format!("parsing save file {pals_path}"))?;
+            let report = pal_save::import::import_pals(&db, &save.characters);
+            let status = format!(
+                "{} pal(s) imported from {pals_path} ({} player(s), {} other entries skipped)",
+                report.pals.len(),
+                report.skipped_players(),
+                report.skipped.len() - report.skipped_players(),
+            );
+            let owned = report
+                .pals
+                .into_iter()
+                .map(|pal| pal_solver::search::OwnedPal {
+                    species: pal.species,
+                    gender: pal.gender,
+                    passives: pal.passives,
+                })
+                .collect();
+            (owned, status)
+        }
+        Ok(bytes) => {
+            let text = String::from_utf8(bytes)
+                .with_context(|| format!("{pals_path} is neither a save file nor UTF-8 TOML"))?;
             let owned = pals_file::parse(&text, &db).with_context(|| format!("in {pals_path}"))?;
             let status = format!("{} owned pal(s) loaded from {pals_path}", owned.len());
             (owned, status)
