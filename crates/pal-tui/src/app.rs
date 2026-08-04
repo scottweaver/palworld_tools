@@ -72,7 +72,7 @@ impl<'db> App<'db> {
             plans: Vec::new(),
             plan_cursor: 0,
             max_breeding_steps: DEFAULT_BREEDING_STEPS,
-            allow_wild: true,
+            allow_wild: false,
             status: String::new(),
             should_quit: false,
         }
@@ -581,19 +581,21 @@ mod tests {
     fn f2_toggles_wild_mode_and_search_honors_it() {
         let f = fixture();
         let mut app = App::new(f.solver, Vec::new());
-        assert!(app.allow_wild);
+        assert!(!app.allow_wild, "wild mode defaults to off");
 
         app.handle_key(key(KeyCode::F(2)));
-        assert!(!app.allow_wild);
-        assert!(app.status.contains("off"));
-        app.handle_key(key(KeyCode::F(2)));
         assert!(app.allow_wild);
+        assert!(app.status.contains("on"));
 
         // Empty pool, catchable target: wild mode finds the catch plan.
         app.target = Some(PalName::new("SheepBall"));
         app.run_search();
         assert!(!app.plans.is_empty());
         assert_eq!(app.plans[0].steps, 0);
+
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.allow_wild);
+        assert!(app.status.contains("off"));
     }
 
     #[test]

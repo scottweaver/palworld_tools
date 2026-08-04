@@ -542,7 +542,7 @@ mod tests {
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
         assert!(rendered.contains("depth"));
-        assert!(rendered.contains("wild on"));
+        assert!(rendered.contains("wild off"));
         assert!(rendered.contains("Lamball"));
         assert!(rendered.contains("/lamb"));
     }
