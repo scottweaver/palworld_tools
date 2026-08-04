@@ -175,6 +175,29 @@ mod tests {
     }
 
     #[test]
+    fn stores_written_before_goal_progenitors_still_load() {
+        let path = scratch_path("pre-progenitors.json");
+        std::fs::write(
+            &path,
+            r#"[{
+                "label": "old",
+                "goal_species": "DreamDemon",
+                "goal_passives": ["Runner"],
+                "expected_eggs": 1.67,
+                "steps": 1,
+                "root": {"Wild": "SheepBall"}
+            }]"#,
+        )
+        .unwrap();
+
+        let store = PlanStore::load(path.clone()).unwrap();
+        assert_eq!(store.plans.len(), 1);
+        assert!(store.plans[0].goal_progenitors.is_empty());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn legacy_stores_migrate_once_and_never_clobber() {
         let legacy = scratch_path("legacy.json");
         let stable = scratch_path("stable-dir").join("plans.json");
