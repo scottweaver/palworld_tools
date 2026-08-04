@@ -58,6 +58,27 @@ fn reproduce_search_from_save() {
             owned.push(candidate);
         }
     }
+    // Hypothetical pals: PROBE_EXTRA="Species,gender,Passive|Passive".
+    if let Ok(spec) = std::env::var("PROBE_EXTRA") {
+        let parts: Vec<&str> = spec.split(',').collect();
+        let species = db.find_pal(parts[0]).expect("extra species").name.clone();
+        let gender = if parts[1].eq_ignore_ascii_case("male") {
+            pal_core::model::Gender::Male
+        } else {
+            pal_core::model::Gender::Female
+        };
+        let passives = parts[2]
+            .split('|')
+            .map(|name| db.find_passive(name).expect("extra passive").name.clone())
+            .collect();
+        let extra = OwnedPal {
+            species,
+            gender,
+            passives,
+        };
+        println!("injected hypothetical: {extra:?}");
+        owned.push(extra);
+    }
     println!("pool: {} unique profiles", owned.len());
 
     let desired: Vec<_> = std::env::var("PROBE_PASSIVES")
