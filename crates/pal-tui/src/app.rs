@@ -12,10 +12,11 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 const MAX_RESULTS: usize = 5;
 const DEFAULT_BREEDING_STEPS: usize = 3;
 pub const MIN_BREEDING_STEPS: usize = 1;
-/// Species reach never needs more than 7 steps (the vendored
-/// min-steps matrix tops out there); one extra for passive
-/// consolidation. Deeper searches also get slow on the UI thread.
-pub const MAX_BREEDING_STEPS: usize = 8;
+/// Deep plans matter with wild mode off, where routing through a
+/// limited owned pool can far exceed the 7-step wild-partner bound.
+/// The solver's incumbent cut makes deep searches converge early, so
+/// a high ceiling costs little.
+pub const MAX_BREEDING_STEPS: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
@@ -635,11 +636,11 @@ mod tests {
         assert_eq!(app.max_breeding_steps, 4);
         assert!(app.status.contains("4 breeding step"));
 
-        for _ in 0..20 {
+        for _ in 0..=MAX_BREEDING_STEPS {
             app.handle_key(key(KeyCode::Left));
         }
         assert_eq!(app.max_breeding_steps, MIN_BREEDING_STEPS);
-        for _ in 0..20 {
+        for _ in 0..=MAX_BREEDING_STEPS {
             app.handle_key(key(KeyCode::Right));
         }
         assert_eq!(app.max_breeding_steps, MAX_BREEDING_STEPS);

@@ -61,6 +61,15 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Depth cap 8 → 24 + incumbent cut.** With wild off
+  by default, closed-pool routing can legitimately exceed the old
+  7+1 bound. Solver gains a branch-and-bound cut (candidates whose
+  root cost + remaining-distance eggs can't beat the worst incumbent
+  plan are dropped once max_results plans exist). Measured on the
+  real save at depth 24: 0.13s wild-off / 0.28s wild-on. Risk: the
+  pathological combo (deep + wild + 3 progenitor marks) still runs
+  ~15s on the UI thread — the state-space churn needs a
+  priority-queue search, queued with the worker-thread item.
 - **2026-08-03 — Mouse support in the TUI.** Left-click focuses a
   pane and acts on the row under the pointer (target in Pals, toggle
   in Passives, plan selection in Results); ⇧click marks a progenitor.

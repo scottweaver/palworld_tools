@@ -50,11 +50,15 @@ fn deep_progenitor_search_timing() {
     let solver = Solver::new(&pal_db, &index, &odds);
     println!("solver setup: {:?}", setup.elapsed());
 
-    for round in 1..=3 {
+    for depth in [6, 12, 20, 32] {
+        let config = SearchConfig {
+            max_breeding_steps: depth,
+            ..config
+        };
         let start = Instant::now();
         let plans = solver.find_paths(&[], &goal, &config).unwrap();
         println!(
-            "round {round}: {:?} — {} plan(s), best {:.2} eggs / {} steps",
+            "depth {depth}: {:?} — {} plan(s), best {:.2} eggs / {} steps",
             start.elapsed(),
             plans.len(),
             plans[0].expected_eggs,
