@@ -1,1 +1,6 @@
 /target
+
+# Per-user data the app reads/writes in the working directory.
+/pals.toml
+/plans.json
+/plans.json.bak

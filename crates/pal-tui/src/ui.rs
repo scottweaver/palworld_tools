@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type to filter · Enter/click select · F4/⇧click progenitor · Del clear · ←/→ depth · F2 wild · F5 search · Esc quit",
+            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,
@@ -234,42 +234,79 @@ fn draw_filterable_list(
 }
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
-    let wild = if app.allow_wild { "on" } else { "off" };
-    let target = app
-        .target
-        .as_ref()
-        .map_or("no target", |name| display(app.db(), name));
-    let title = format!(
-        " Plans — {target} · depth ≤ {} · wild {wild} ",
-        app.max_breeding_steps
-    );
+    let (title, items, cursor, detail): (String, Vec<ListItem>, usize, Vec<Line>) = if app
+        .viewing_saved
+    {
+        let title = format!(" Saved plans ({}) ", app.saved.plans.len());
+        let items = app
+            .saved
+            .plans
+            .iter()
+            .map(|plan| ListItem::new(plan.label.clone()))
+            .collect();
+        let detail = app.saved.plans.get(app.saved_cursor).map_or_else(
+                || vec![Line::from("library empty — F8 saves the highlighted plan")],
+                |plan| {
+                    let stale = app.stale_leaves(plan);
+                    let banner = if stale > 0 {
+                        Line::from(Span::styled(
+                            format!(
+                                "⚠ {stale} pal(s) no longer in your box — Enter re-plans with the current box"
+                            ),
+                            Style::new().fg(Color::Yellow),
+                        ))
+                    } else {
+                        Line::from(Span::styled(
+                            "✓ all pals still available · Enter re-plans with the current box",
+                            Style::new().add_modifier(Modifier::DIM),
+                        ))
+                    };
+                    let mut lines = vec![banner];
+                    lines.extend(plan_tree(app.db(), &plan.root));
+                    lines
+                },
+            );
+        (title, items, app.saved_cursor, detail)
+    } else {
+        let wild = if app.allow_wild { "on" } else { "off" };
+        let target = app
+            .target
+            .as_ref()
+            .map_or("no target", |name| display(app.db(), name));
+        let title = format!(
+            " Plans — {target} · depth ≤ {} · wild {wild} ",
+            app.max_breeding_steps
+        );
+        let items = app
+            .plans
+            .iter()
+            .enumerate()
+            .map(|(position, plan)| {
+                ListItem::new(format!(
+                    "{}. {:.2} expected eggs, {} step(s)",
+                    position + 1,
+                    plan.expected_eggs,
+                    plan.steps
+                ))
+            })
+            .collect();
+        let detail = app.plans.get(app.plan_cursor).map_or_else(
+            || vec![Line::from("run a search (F5) to see plans")],
+            |plan| plan_tree(app.db(), &plan.root),
+        );
+        (title, items, app.plan_cursor, detail)
+    };
+
     let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [list_area, detail_area] =
         Layout::vertical([Constraint::Length(PLANS_LIST_HEIGHT), Constraint::Min(1)]).areas(inner);
 
-    let items: Vec<ListItem> = app
-        .plans
-        .iter()
-        .enumerate()
-        .map(|(position, plan)| {
-            ListItem::new(format!(
-                "{}. {:.2} expected eggs, {} step(s)",
-                position + 1,
-                plan.expected_eggs,
-                plan.steps
-            ))
-        })
-        .collect();
     let list = List::new(items).highlight_style(Style::new().add_modifier(Modifier::REVERSED));
-    let mut state = ListState::default().with_selected(Some(app.plan_cursor));
+    let mut state = ListState::default().with_selected(Some(cursor));
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    let detail: Vec<Line> = app.plans.get(app.plan_cursor).map_or_else(
-        || vec![Line::from("run a search (F5) to see plans")],
-        |plan| plan_tree(app.db(), &plan.root),
-    );
     frame.render_widget(
         Paragraph::new(detail).wrap(Wrap { trim: false }),
         detail_area,
@@ -405,7 +442,7 @@ fn display_passive(db: &PalDb, name: &pal_core::model::PassiveName) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::fixture;
+    use crate::test_support::{fixture, test_store};
     use pal_core::model::PassiveName;
     use pal_solver::search::{BredNode, OwnedPal};
     use ratatui::Terminal;
@@ -463,7 +500,7 @@ mod tests {
     #[test]
     fn clicks_resolve_rows_through_the_layout() {
         let f = fixture();
-        let app = App::new(f.solver, Vec::new());
+        let app = App::new(f.solver, Vec::new(), test_store());
         let area = Rect::new(0, 0, 120, 40);
         let areas = pane_areas(area);
 
@@ -532,7 +569,7 @@ mod tests {
     #[test]
     fn draws_all_panes_without_panicking() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         app.species_filter = "lamb".to_owned();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();

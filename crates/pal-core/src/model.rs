@@ -13,7 +13,8 @@ use std::fmt;
 /// Canonical pal identifier — the game's internal name (e.g.
 /// `SheepBall` for Lamball). Every table in the database keys on this;
 /// display names are localization.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct PalName(String);
 
 impl PalName {
@@ -34,7 +35,8 @@ impl fmt::Display for PalName {
 }
 
 /// Canonical passive-skill identifier (the game's internal name).
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct PassiveName(String);
 
 impl PassiveName {
@@ -54,7 +56,7 @@ impl fmt::Display for PassiveName {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Gender {
     Male,
     Female,

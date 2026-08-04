@@ -41,7 +41,7 @@ use crate::passives::{MAX_TOTAL_PASSIVES, PassiveOdds};
 use crate::steps::SpeciesAdjacency;
 
 /// A pal the player already has: the leaf material of every plan.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OwnedPal {
     pub species: PalName,
     pub gender: Gender,
@@ -78,7 +78,7 @@ pub struct SearchConfig {
 /// One node of a finished plan: an owned pal, a wild pal to catch, a
 /// required progenitor (the pairing position implies the gender to
 /// use), or a breeding step whose parents are themselves plan nodes.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum PlanNode {
     Owned(OwnedPal),
     Wild(PalName),
@@ -88,7 +88,7 @@ pub enum PlanNode {
 
 /// A breeding step: pair `male` × `female`, re-hatching until the
 /// child carries `carried_passives`.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BredNode {
     pub male: PlanNode,
     pub female: PlanNode,

@@ -30,6 +30,8 @@ Rust.
   every owned pal (species, gender, passive skills) becomes breeding
   stock. Supports current Oodle-compressed saves (`PlM`, Palworld
   0.6+), the older zlib era (`PlZ`), and Xbox containers (`CNK`).
+  `F6` re-imports the file in place, so hatching progress flows in
+  after each in-game save without restarting.
 - **Passive-skill planning** — pick up to 4 target passives; plans
   are ranked by **expected eggs**, computed with palcalc's
   inheritance-probability model (verified against its formulas).
@@ -104,10 +106,13 @@ nothing to submit — pick a target and watch the Plans pane.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Delete` | Clear all progenitor marks |
+| `Ctrl+D` (or `Delete`) | Clear all progenitor marks; in the library: delete the highlighted saved plan (`Backspace` also deletes there — the natural key on Mac laptops) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
+| `F6` | Reload the pool from the save/toml on disk (after an in-game save — no restart needed) |
+| `F8` | Save the highlighted plan to the library |
+| `F9` | Toggle the Plans pane between live results and the saved-plan library |
 | `Esc` | Quit |
 
 Selected passives and marked progenitors **pin to the top** of their
@@ -151,6 +156,31 @@ of the F2 setting — anchors need partners), while the rest of your
 box steps aside. Note that anchors contribute their species only;
 if you also select passives, the passives must come from somewhere,
 so prefer un-anchored searches for passive goals.
+
+### The saved-plan library
+
+Found a plan you'll execute over several play sessions? `F8` saves
+the highlighted plan into your library. It lives at a stable
+per-user path regardless of where you launch from — macOS:
+`~/Library/Application Support/palworld_tools/plans.json`, Linux:
+`~/.local/share/palworld_tools/plans.json`, Windows:
+`%LOCALAPPDATA%\palworld_tools\plans.json` (a legacy `./plans.json`
+migrates there automatically; `F9`'s status line shows the exact
+path). `F9` flips the Plans pane to the library, where `↑`/`↓`/click
+browse and `Ctrl+D`/`Backspace` removes the highlighted entry.
+Saved plans are fully self-contained — the whole tree with species,
+genders, and passives — so they stay readable even after your box
+changes.
+
+The library shows the **original** plan, with a staleness banner:
+`✓` when every pal in it still exists in your current box, `⚠ N
+pal(s) no longer in your box` when the world has moved. Pressing
+`Enter` on a saved plan **re-plans it**: the saved goal (target,
+passives, progenitor marks) is restored and searched against your
+current box, and the status line compares the fresh best cost with
+what you saved. The original stays in the library untouched.
+Changing anything about the live search flips you back to live
+results.
 
 ### Wild-capture mode
 

@@ -4,6 +4,8 @@
 
 mod app;
 mod pals_file;
+mod plan_store;
+mod pool;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -32,48 +34,44 @@ fn main() -> Result<()> {
     let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
     let solver = Solver::new(&db, &index, &odds);
 
-    let (owned, pool_status) = match std::fs::read(&pals_path) {
-        Ok(bytes) if pal_save::looks_like_sav(&bytes) => {
-            let save = pal_save::level::read_level_sav(&bytes)
-                .with_context(|| format!("parsing save file {pals_path}"))?;
-            let report = pal_save::import::import_pals(&db, &save.characters);
-            let status = format!(
-                "{} pal(s) imported from {pals_path} ({} player(s), {} other entries skipped)",
-                report.pals.len(),
-                report.skipped_players(),
-                report.skipped.len() - report.skipped_players(),
-            );
-            // Identical breeding profiles are interchangeable to the
-            // solver; deduping keeps big box collections fast.
-            let mut owned: Vec<pal_solver::search::OwnedPal> = Vec::new();
-            for pal in report.pals {
-                let candidate = pal_solver::search::OwnedPal {
-                    species: pal.species,
-                    gender: pal.gender,
-                    passives: pal.passives,
-                };
-                if !owned.contains(&candidate) {
-                    owned.push(candidate);
-                }
-            }
-            let status = format!("{status}; {} unique breeding profile(s)", owned.len());
-            (owned, status)
-        }
-        Ok(bytes) => {
-            let text = String::from_utf8(bytes)
-                .with_context(|| format!("{pals_path} is neither a save file nor UTF-8 TOML"))?;
-            let owned = pals_file::parse(&text, &db).with_context(|| format!("in {pals_path}"))?;
-            let status = format!("{} owned pal(s) loaded from {pals_path}", owned.len());
-            (owned, status)
-        }
-        Err(_) => (
+    let (owned, pool_status) = match pool::load(&pals_path, &db)? {
+        pool::Loaded::Pool { owned, status } => (owned, status),
+        pool::Loaded::Missing => (
             Vec::new(),
             format!("{pals_path} not found — searching from an empty pool"),
         ),
     };
 
-    let mut app = App::new(&solver, owned);
-    app.status = pool_status;
+    let plans_path = plan_store::stable_path();
+    let migrated = plan_store::migrate_legacy(std::path::Path::new("plans.json"), &plans_path)
+        .unwrap_or(false);
+    let (saved, store_note) = match plan_store::PlanStore::load(plans_path.clone()) {
+        Ok(store) => {
+            let note = if migrated {
+                format!(
+                    "; migrated {} saved plan(s) to {}",
+                    store.plans.len(),
+                    plans_path.display()
+                )
+            } else if store.plans.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; {} saved plan(s) — F9 opens the library",
+                    store.plans.len()
+                )
+            };
+            (store, note)
+        }
+        Err(error) => (
+            plan_store::PlanStore::fresh(plans_path),
+            format!("; plans library issue: {error:#}"),
+        ),
+    };
+
+    let mut app = App::new(&solver, owned, saved);
+    app.pool_path = Some(pals_path);
+    app.status = format!("{pool_status}{store_note}");
 
     let mut terminal = ratatui::init();
     let mouse_capture = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
@@ -106,11 +104,25 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod test_support {
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use pal_core::model::PalDb;
     use pal_solver::child::ChildIndex;
     use pal_solver::passives::PassiveOdds;
     use pal_solver::search::Solver;
+
+    use crate::plan_store::PlanStore;
+
+    /// A fresh store on a unique scratch path per call, so tests that
+    /// persist never interfere with each other.
+    pub fn test_store() -> PlanStore {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        PlanStore::fresh(std::env::temp_dir().join(format!(
+            "pal-tui-test-store-{}-{unique}.json",
+            std::process::id()
+        )))
+    }
 
     struct Data {
         db: PalDb,
