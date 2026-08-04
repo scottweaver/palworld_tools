@@ -4,52 +4,162 @@
 use pal_core::model::{Gender, PalDb, PalName, PassiveName};
 use pal_solver::search::PlanNode;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::app::{App, Pane};
+use crate::app::{App, Click, Pane};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+/// The screen regions draw and click hit-testing must agree on.
+struct PaneAreas {
+    species: Rect,
+    passives: Rect,
+    results: Rect,
+    status: Rect,
+    help: Rect,
+}
+
+fn pane_areas(area: Rect) -> PaneAreas {
     let [main, status, help] = Layout::vertical([
         Constraint::Min(5),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
-    .areas(frame.area());
+    .areas(area);
     let [species, passives, results] = Layout::horizontal([
         Constraint::Percentage(24),
         Constraint::Percentage(26),
         Constraint::Percentage(50),
     ])
     .areas(main);
+    PaneAreas {
+        species,
+        passives,
+        results,
+        status,
+        help,
+    }
+}
 
-    draw_species(frame, app, species);
-    draw_passives(frame, app, passives);
-    draw_results(frame, app, results);
-    frame.render_widget(Paragraph::new(app.status.as_str()), status);
+/// Rows the plans list occupies inside the Results pane (the detail
+/// tree renders below).
+const PLANS_LIST_HEIGHT: u16 = 7;
+
+pub fn draw(frame: &mut Frame, app: &App) {
+    let areas = pane_areas(frame.area());
+
+    draw_species(frame, app, areas.species);
+    draw_passives(frame, app, areas.passives);
+    draw_results(frame, app, areas.results);
+    frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type to filter · Enter select · F4 progenitor · Del clear · ←/→ depth · F2 wild · F5 search · Esc quit",
+            "Tab panes · type to filter · Enter/click select · F4/⇧click progenitor · Del clear · ←/→ depth · F2 wild · F5 search · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
-        help,
+        areas.help,
     );
 }
 
-fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
-    let target = app
-        .target
-        .as_ref()
-        .map_or("none", |name| display(app.db(), name));
-    let title = if app.progenitors.is_empty() {
-        format!(" Pals — target: {target} ")
+/// Maps a click position to the pane (and list row) it landed on.
+/// Must mirror the geometry [`draw`] renders, including the scroll
+/// offset ratatui applies to keep the cursor visible.
+pub fn locate_click(app: &App, area: Rect, column: u16, row: u16) -> Option<Click> {
+    let areas = pane_areas(area);
+    let position = Position { x: column, y: row };
+
+    if areas.species.contains(position) {
+        let index = filterable_row_at(
+            areas.species,
+            position,
+            app.species_cursor,
+            app.species_rows().len(),
+        );
+        return Some(Click {
+            pane: Pane::Pals,
+            row: index,
+        });
+    }
+    if areas.passives.contains(position) {
+        let index = filterable_row_at(
+            areas.passives,
+            position,
+            app.passive_cursor,
+            app.passive_rows().len(),
+        );
+        return Some(Click {
+            pane: Pane::Passives,
+            row: index,
+        });
+    }
+    if areas.results.contains(position) {
+        let inner = areas.results.inner(Margin::new(1, 1));
+        let list_bottom = inner.y.saturating_add(PLANS_LIST_HEIGHT.min(inner.height));
+        let index = (inner.contains(position) && position.y < list_bottom)
+            .then(|| {
+                row_index(
+                    inner.y,
+                    position.y,
+                    app.plan_cursor,
+                    PLANS_LIST_HEIGHT.min(inner.height),
+                    app.plans.len(),
+                )
+            })
+            .flatten();
+        return Some(Click {
+            pane: Pane::Results,
+            row: index,
+        });
+    }
+    None
+}
+
+/// Row index within a filter-plus-list pane (filter line first, list
+/// below the borders).
+fn filterable_row_at(
+    pane: Rect,
+    position: Position,
+    cursor: usize,
+    rows_len: usize,
+) -> Option<usize> {
+    let inner = pane.inner(Margin::new(1, 1));
+    if !inner.contains(position) || position.y == inner.y {
+        return None;
+    }
+    let list_top = inner.y + 1;
+    let list_height = inner.height.saturating_sub(1);
+    row_index(list_top, position.y, cursor, list_height, rows_len)
+}
+
+fn row_index(
+    list_top: u16,
+    click_y: u16,
+    cursor: usize,
+    list_height: u16,
+    rows_len: usize,
+) -> Option<usize> {
+    let offset = scroll_offset(cursor, usize::from(list_height));
+    let index = offset + usize::from(click_y.checked_sub(list_top)?);
+    (index < rows_len).then_some(index)
+}
+
+/// The offset ratatui's `List` settles on when the state is rebuilt
+/// each frame with only `selected` set: scroll just far enough to
+/// keep the selection visible.
+fn scroll_offset(selected: usize, height: usize) -> usize {
+    if height == 0 {
+        0
     } else {
-        format!(
-            " Pals — target: {target} · progenitors: {} ",
-            app.progenitors.len()
-        )
+        selected.saturating_sub(height - 1)
+    }
+}
+
+fn draw_species(frame: &mut Frame, app: &App, area: Rect) {
+    let title = if app.progenitors.is_empty() {
+        " Pals ".to_owned()
+    } else {
+        format!(" Pals — progenitors: {} ", app.progenitors.len())
     };
     let rows = app.species_rows();
     let items: Vec<ListItem> = rows
@@ -125,12 +235,19 @@ fn draw_filterable_list(
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
     let wild = if app.allow_wild { "on" } else { "off" };
-    let title = format!(" Plans — depth ≤ {} · wild {wild} ", app.max_breeding_steps);
+    let target = app
+        .target
+        .as_ref()
+        .map_or("no target", |name| display(app.db(), name));
+    let title = format!(
+        " Plans — {target} · depth ≤ {} · wild {wild} ",
+        app.max_breeding_steps
+    );
     let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [list_area, detail_area] =
-        Layout::vertical([Constraint::Length(7), Constraint::Min(1)]).areas(inner);
+        Layout::vertical([Constraint::Length(PLANS_LIST_HEIGHT), Constraint::Min(1)]).areas(inner);
 
     let items: Vec<ListItem> = app
         .plans
@@ -335,6 +452,52 @@ mod tests {
     }
 
     #[test]
+    fn scroll_offset_keeps_the_selection_visible() {
+        assert_eq!(scroll_offset(0, 5), 0);
+        assert_eq!(scroll_offset(4, 5), 0);
+        assert_eq!(scroll_offset(5, 5), 1);
+        assert_eq!(scroll_offset(10, 3), 8);
+        assert_eq!(scroll_offset(10, 0), 0);
+    }
+
+    #[test]
+    fn clicks_resolve_rows_through_the_layout() {
+        let f = fixture();
+        let app = App::new(f.solver, Vec::new());
+        let area = Rect::new(0, 0, 120, 40);
+        let areas = pane_areas(area);
+
+        // First list row of the Pals pane (one below the filter line).
+        let inner = areas.species.inner(Margin::new(1, 1));
+        assert_eq!(
+            locate_click(&app, area, inner.x, inner.y + 1),
+            Some(Click {
+                pane: Pane::Pals,
+                row: Some(0),
+            })
+        );
+        // The filter line focuses the pane without selecting a row.
+        assert_eq!(
+            locate_click(&app, area, inner.x, inner.y),
+            Some(Click {
+                pane: Pane::Pals,
+                row: None,
+            })
+        );
+        // With no plans, a Results-list click is focus-only.
+        let results_inner = areas.results.inner(Margin::new(1, 1));
+        assert_eq!(
+            locate_click(&app, area, results_inner.x, results_inner.y),
+            Some(Click {
+                pane: Pane::Results,
+                row: None,
+            })
+        );
+        // The status bar is nobody's pane.
+        assert_eq!(locate_click(&app, area, 0, 38), None);
+    }
+
+    #[test]
     fn passive_tiers_get_their_in_game_colors() {
         let f = fixture();
         let by_rank = |predicate: fn(i8) -> bool| {
@@ -378,8 +541,9 @@ mod tests {
         assert!(rendered.contains("Pals"));
         assert!(rendered.contains("Passives"));
         assert!(rendered.contains("Plans"));
+        assert!(rendered.contains("no target"));
         assert!(rendered.contains("depth"));
-        assert!(rendered.contains("wild on"));
+        assert!(rendered.contains("wild off"));
         assert!(rendered.contains("Lamball"));
         assert!(rendered.contains("/lamb"));
     }

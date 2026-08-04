@@ -12,16 +12,25 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 const MAX_RESULTS: usize = 5;
 const DEFAULT_BREEDING_STEPS: usize = 3;
 pub const MIN_BREEDING_STEPS: usize = 1;
-/// Species reach never needs more than 7 steps (the vendored
-/// min-steps matrix tops out there); one extra for passive
-/// consolidation. Deeper searches also get slow on the UI thread.
-pub const MAX_BREEDING_STEPS: usize = 8;
+/// Deep plans matter with wild mode off, where routing through a
+/// limited owned pool can far exceed the 7-step wild-partner bound.
+/// The solver's incumbent cut makes deep searches converge early, so
+/// a high ceiling costs little.
+pub const MAX_BREEDING_STEPS: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
     Pals,
     Passives,
     Results,
+}
+
+/// A resolved mouse click: the pane it landed in, and the list row
+/// under the pointer when it hit one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Click {
+    pub pane: Pane,
+    pub row: Option<usize>,
 }
 
 pub struct App<'db> {
@@ -64,7 +73,7 @@ impl<'db> App<'db> {
             plans: Vec::new(),
             plan_cursor: 0,
             max_breeding_steps: DEFAULT_BREEDING_STEPS,
-            allow_wild: true,
+            allow_wild: false,
             status: String::new(),
             should_quit: false,
         }
@@ -100,13 +109,22 @@ impl<'db> App<'db> {
         rows
     }
 
-    /// Standard passives matching the filter, sorted by display name.
+    /// Rows for the Passives pane: selected passives pinned at the
+    /// top (in selection order, shown even when the filter would
+    /// exclude them, so each stays one keypress from deselecting),
+    /// then every standard filter match sorted by display name.
     #[must_use]
     pub fn passive_rows(&self) -> Vec<&'db PassiveSkill> {
-        let mut rows: Vec<&PassiveSkill> = self
+        let pinned: Vec<&PassiveSkill> = self
+            .selected_passives
+            .iter()
+            .filter_map(|name| self.db().passive(name))
+            .collect();
+        let mut rest: Vec<&PassiveSkill> = self
             .db()
             .passives()
             .filter(|skill| skill.standard)
+            .filter(|skill| !self.selected_passives.contains(&skill.name))
             .filter(|skill| {
                 matches_filter(
                     &self.passive_filter,
@@ -115,7 +133,9 @@ impl<'db> App<'db> {
                 )
             })
             .collect();
-        rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        rest.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        let mut rows = pinned;
+        rows.extend(rest);
         rows
     }
 
@@ -149,7 +169,54 @@ impl<'db> App<'db> {
         }
     }
 
+    /// Mouse selection: clicking focuses the pane; clicking a row
+    /// acts on it — target in the Pals pane (⇧ marks a progenitor
+    /// instead), toggle in Passives, plan selection in Results.
+    pub fn handle_click(&mut self, click: Click, shift: bool) {
+        self.focus = click.pane;
+        let Some(index) = click.row else { return };
+        match click.pane {
+            Pane::Pals => {
+                if index < self.species_rows().len() {
+                    self.species_cursor = index;
+                    if shift {
+                        self.toggle_progenitor();
+                    } else {
+                        self.confirm();
+                    }
+                }
+            }
+            Pane::Passives => {
+                if index < self.passive_rows().len() {
+                    self.passive_cursor = index;
+                    self.confirm();
+                }
+            }
+            Pane::Results => {
+                if index < self.plans.len() {
+                    self.plan_cursor = index;
+                }
+            }
+        }
+    }
+
     pub fn run_search(&mut self) {
+        self.search(true);
+    }
+
+    /// Re-runs the search after a state change: silently when no
+    /// target is picked yet (plans just stay empty), and without
+    /// stealing focus — only an explicit F5/Enter jumps to Results.
+    fn refresh_plans(&mut self) {
+        if self.target.is_some() {
+            self.search(false);
+        } else {
+            self.plans.clear();
+            self.plan_cursor = 0;
+        }
+    }
+
+    fn search(&mut self, focus_results: bool) {
         let Some(target) = self.target.clone() else {
             "pick a target pal first (Enter in the Pals pane)".clone_into(&mut self.status);
             return;
@@ -196,7 +263,7 @@ impl<'db> App<'db> {
                 };
                 self.plans = plans;
                 self.plan_cursor = 0;
-                if !self.plans.is_empty() {
+                if focus_results && !self.plans.is_empty() {
                     self.focus = Pane::Results;
                 }
             }
@@ -210,6 +277,7 @@ impl<'db> App<'db> {
                 if let Some(pal) = self.species_rows().get(self.species_cursor).copied() {
                     self.target = Some(pal.name.clone());
                     self.status = format!("target: {}", pal.display_name);
+                    self.refresh_plans();
                 }
             }
             Pane::Passives => {
@@ -225,11 +293,13 @@ impl<'db> App<'db> {
         if let Some(position) = self.selected_passives.iter().position(|p| *p == name) {
             self.selected_passives.remove(position);
             self.status = format!("dropped {display}");
+            self.refresh_plans();
         } else if self.selected_passives.len() == MAX_TOTAL_PASSIVES {
             self.status = format!("a pal carries at most {MAX_TOTAL_PASSIVES} passives");
         } else {
             self.selected_passives.push(name);
             self.status = format!("added {display}");
+            self.refresh_plans();
         }
     }
 
@@ -243,6 +313,7 @@ impl<'db> App<'db> {
         if let Some(position) = self.progenitors.iter().position(|p| *p == pal.name) {
             self.progenitors.remove(position);
             self.status = format!("progenitor removed: {}", pal.display_name);
+            self.refresh_plans();
         } else if self.progenitors.len() == MAX_PROGENITORS {
             self.status = format!("at most {MAX_PROGENITORS} progenitors");
         } else {
@@ -252,6 +323,7 @@ impl<'db> App<'db> {
                 pal.display_name,
                 self.progenitors.len()
             );
+            self.refresh_plans();
         }
     }
 
@@ -261,6 +333,7 @@ impl<'db> App<'db> {
         } else {
             self.status = format!("cleared {} progenitor(s)", self.progenitors.len());
             self.progenitors.clear();
+            self.refresh_plans();
         }
     }
 
@@ -271,17 +344,23 @@ impl<'db> App<'db> {
         } else {
             "wild pals: off — plans use only the owned pool".to_owned()
         };
+        self.refresh_plans();
     }
 
     fn adjust_depth(&mut self, delta: isize) {
-        self.max_breeding_steps = self
+        let adjusted = self
             .max_breeding_steps
             .saturating_add_signed(delta)
             .clamp(MIN_BREEDING_STEPS, MAX_BREEDING_STEPS);
+        let changed = adjusted != self.max_breeding_steps;
+        self.max_breeding_steps = adjusted;
         self.status = format!(
             "search depth: up to {} breeding step(s)",
             self.max_breeding_steps
         );
+        if changed {
+            self.refresh_plans();
+        }
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -471,6 +550,23 @@ mod tests {
     }
 
     #[test]
+    fn selected_passives_pin_to_the_top_of_the_list() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new());
+        let last = app.passive_rows().last().copied().unwrap().name.clone();
+        app.selected_passives = vec![last.clone()];
+
+        // Pinned first despite sorting last alphabetically.
+        assert_eq!(app.passive_rows()[0].name, last);
+
+        // Still pinned (and the only row) when the filter excludes it.
+        app.passive_filter = "zzz-no-such-passive".to_owned();
+        let rows = app.passive_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, last);
+    }
+
+    #[test]
     fn progenitor_mode_reports_that_passives_need_the_pool() {
         let f = fixture();
         let mut app = App::new(f.solver, Vec::new());
@@ -495,22 +591,118 @@ mod tests {
     }
 
     #[test]
+    fn changes_re_search_automatically_and_never_leave_stale_plans() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned);
+
+        // Selecting a target searches immediately, without stealing
+        // focus.
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.focus, Pane::Pals);
+        assert_eq!(*app.plans[0].root.species(), PalName::new("DreamDemon"));
+
+        // Changing the target replaces the plans in place.
+        app.species_filter.clear();
+        for c in "fuack".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+        assert_eq!(*app.plans[0].root.species(), PalName::new("BluePlatypus"));
+
+        // Depth changes re-search: depth 1 cannot reach Fuack.
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(key(KeyCode::Left));
+        assert_eq!(app.max_breeding_steps, 1);
+        assert!(app.plans.is_empty());
+
+        // Toggling wild re-searches: Fuack becomes catchable.
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.plans[0].steps, 0);
+    }
+
+    #[test]
+    fn clicks_select_and_shift_click_marks_progenitors() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new());
+        let first = app.species_rows()[0].name.clone();
+
+        app.handle_click(
+            Click {
+                pane: Pane::Pals,
+                row: Some(0),
+            },
+            false,
+        );
+        assert_eq!(app.focus, Pane::Pals);
+        assert_eq!(app.target, Some(first.clone()));
+
+        app.handle_click(
+            Click {
+                pane: Pane::Pals,
+                row: Some(0),
+            },
+            true,
+        );
+        assert_eq!(app.progenitors, vec![first]);
+
+        app.handle_click(
+            Click {
+                pane: Pane::Passives,
+                row: Some(0),
+            },
+            false,
+        );
+        assert_eq!(app.selected_passives.len(), 1);
+
+        app.handle_click(
+            Click {
+                pane: Pane::Results,
+                row: None,
+            },
+            false,
+        );
+        assert_eq!(app.focus, Pane::Results);
+    }
+
+    #[test]
     fn f2_toggles_wild_mode_and_search_honors_it() {
         let f = fixture();
         let mut app = App::new(f.solver, Vec::new());
-        assert!(app.allow_wild);
+        assert!(!app.allow_wild, "wild mode defaults to off");
 
         app.handle_key(key(KeyCode::F(2)));
-        assert!(!app.allow_wild);
-        assert!(app.status.contains("off"));
-        app.handle_key(key(KeyCode::F(2)));
         assert!(app.allow_wild);
+        assert!(app.status.contains("on"));
 
         // Empty pool, catchable target: wild mode finds the catch plan.
         app.target = Some(PalName::new("SheepBall"));
         app.run_search();
         assert!(!app.plans.is_empty());
         assert_eq!(app.plans[0].steps, 0);
+
+        // Toggling back re-searches (status now reports the result,
+        // not the toggle), and the catch plan disappears.
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.allow_wild);
+        assert!(app.plans.is_empty());
     }
 
     #[test]
@@ -522,11 +714,11 @@ mod tests {
         assert_eq!(app.max_breeding_steps, 4);
         assert!(app.status.contains("4 breeding step"));
 
-        for _ in 0..20 {
+        for _ in 0..=MAX_BREEDING_STEPS {
             app.handle_key(key(KeyCode::Left));
         }
         assert_eq!(app.max_breeding_steps, MIN_BREEDING_STEPS);
-        for _ in 0..20 {
+        for _ in 0..=MAX_BREEDING_STEPS {
             app.handle_key(key(KeyCode::Right));
         }
         assert_eq!(app.max_breeding_steps, MAX_BREEDING_STEPS);

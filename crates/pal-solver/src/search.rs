@@ -214,7 +214,28 @@ impl<'db> Solver<'db> {
         let mut buckets: HashMap<BredState, Vec<RecordId>> = HashMap::new();
         let mut frontier = leaves.clone();
 
+        let full = DesiredMask::full(goal.passives.len());
+        let all_progenitors = DesiredMask::full(goal.progenitors.len());
+        let goal_state: BredState = (goal.species.clone(), full, all_progenitors);
+
         for _ in 0..config.max_breeding_steps {
+            // Branch-and-bound: once `max_results` goal plans exist,
+            // a candidate whose root cost already matches the worst
+            // of them can never improve the results — any plan built
+            // on it costs at least that much (`cost_as >= root_cost`
+            // since gender probabilities are <= 1, and downstream
+            // breeding only adds eggs). Deep searches converge fast
+            // because of this cut.
+            let incumbent_worst = buckets
+                .get(&goal_state)
+                .filter(|bucket| bucket.len() >= config.max_results)
+                .map(|bucket| {
+                    bucket
+                        .iter()
+                        .map(|id| arena[id.0].root_cost())
+                        .fold(f64::NEG_INFINITY, f64::max)
+                });
+
             let children = expand_frontier(
                 ExpandContext {
                     pal_db: self.pal_db,
@@ -231,6 +252,23 @@ impl<'db> Solver<'db> {
             );
             frontier.clear();
             for child in children {
+                if let Some(worst) = incumbent_worst {
+                    // A non-goal candidate still needs at least
+                    // `distance` further breeding steps, each of
+                    // which costs at least one expected egg.
+                    let remaining_steps = if child.species == goal.species {
+                        u32::from(child.carried != full || child.required != all_progenitors)
+                    } else {
+                        distance_to_goal
+                            .get(&child.species)
+                            .copied()
+                            .unwrap_or(1)
+                            .max(1)
+                    };
+                    if child.root_cost() + f64::from(remaining_steps) >= worst {
+                        continue;
+                    }
+                }
                 if let Some(id) = insert_pruned(&mut arena, &mut buckets, child, config.max_results)
                 {
                     frontier.push(id);
@@ -240,9 +278,6 @@ impl<'db> Solver<'db> {
                 break;
             }
         }
-
-        let full = DesiredMask::full(goal.passives.len());
-        let all_progenitors = DesiredMask::full(goal.progenitors.len());
         let mut plans: Vec<BreedingPlan> = leaves
             .iter()
             .chain(buckets.values().flatten())
