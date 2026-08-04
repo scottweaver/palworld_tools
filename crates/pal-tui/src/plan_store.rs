@@ -15,6 +15,10 @@ pub struct SavedPlan {
     pub label: String,
     pub goal_species: PalName,
     pub goal_passives: Vec<PassiveName>,
+    /// Progenitor marks active when the plan was saved (defaulted so
+    /// stores written before this field existed still load).
+    #[serde(default)]
+    pub goal_progenitors: Vec<PalName>,
     pub expected_eggs: f64,
     pub steps: usize,
     pub root: PlanNode,
@@ -101,6 +105,7 @@ mod tests {
             label: label.to_owned(),
             goal_species: PalName::new("DreamDemon"),
             goal_passives: vec![PassiveName::new("Runner")],
+            goal_progenitors: Vec::new(),
             expected_eggs: 1.67,
             steps: 1,
             root: PlanNode::Owned(OwnedPal {

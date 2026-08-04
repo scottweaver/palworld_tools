@@ -234,49 +234,68 @@ fn draw_filterable_list(
 }
 
 fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
-    let (title, items, cursor, detail): (String, Vec<ListItem>, usize, Vec<Line>) =
-        if app.viewing_saved {
-            let title = format!(" Saved plans ({}) ", app.saved.plans.len());
-            let items = app
-                .saved
-                .plans
-                .iter()
-                .map(|plan| ListItem::new(plan.label.clone()))
-                .collect();
-            let detail = app.saved.plans.get(app.saved_cursor).map_or_else(
+    let (title, items, cursor, detail): (String, Vec<ListItem>, usize, Vec<Line>) = if app
+        .viewing_saved
+    {
+        let title = format!(" Saved plans ({}) ", app.saved.plans.len());
+        let items = app
+            .saved
+            .plans
+            .iter()
+            .map(|plan| ListItem::new(plan.label.clone()))
+            .collect();
+        let detail = app.saved.plans.get(app.saved_cursor).map_or_else(
                 || vec![Line::from("library empty — F8 saves the highlighted plan")],
-                |plan| plan_tree(app.db(), &plan.root),
+                |plan| {
+                    let stale = app.stale_leaves(plan);
+                    let banner = if stale > 0 {
+                        Line::from(Span::styled(
+                            format!(
+                                "⚠ {stale} pal(s) no longer in your box — Enter re-plans with the current box"
+                            ),
+                            Style::new().fg(Color::Yellow),
+                        ))
+                    } else {
+                        Line::from(Span::styled(
+                            "✓ all pals still available · Enter re-plans with the current box",
+                            Style::new().add_modifier(Modifier::DIM),
+                        ))
+                    };
+                    let mut lines = vec![banner];
+                    lines.extend(plan_tree(app.db(), &plan.root));
+                    lines
+                },
             );
-            (title, items, app.saved_cursor, detail)
-        } else {
-            let wild = if app.allow_wild { "on" } else { "off" };
-            let target = app
-                .target
-                .as_ref()
-                .map_or("no target", |name| display(app.db(), name));
-            let title = format!(
-                " Plans — {target} · depth ≤ {} · wild {wild} ",
-                app.max_breeding_steps
-            );
-            let items = app
-                .plans
-                .iter()
-                .enumerate()
-                .map(|(position, plan)| {
-                    ListItem::new(format!(
-                        "{}. {:.2} expected eggs, {} step(s)",
-                        position + 1,
-                        plan.expected_eggs,
-                        plan.steps
-                    ))
-                })
-                .collect();
-            let detail = app.plans.get(app.plan_cursor).map_or_else(
-                || vec![Line::from("run a search (F5) to see plans")],
-                |plan| plan_tree(app.db(), &plan.root),
-            );
-            (title, items, app.plan_cursor, detail)
-        };
+        (title, items, app.saved_cursor, detail)
+    } else {
+        let wild = if app.allow_wild { "on" } else { "off" };
+        let target = app
+            .target
+            .as_ref()
+            .map_or("no target", |name| display(app.db(), name));
+        let title = format!(
+            " Plans — {target} · depth ≤ {} · wild {wild} ",
+            app.max_breeding_steps
+        );
+        let items = app
+            .plans
+            .iter()
+            .enumerate()
+            .map(|(position, plan)| {
+                ListItem::new(format!(
+                    "{}. {:.2} expected eggs, {} step(s)",
+                    position + 1,
+                    plan.expected_eggs,
+                    plan.steps
+                ))
+            })
+            .collect();
+        let detail = app.plans.get(app.plan_cursor).map_or_else(
+            || vec![Line::from("run a search (F5) to see plans")],
+            |plan| plan_tree(app.db(), &plan.root),
+        );
+        (title, items, app.plan_cursor, detail)
+    };
 
     let block = pane_block(&title, app.focus == Pane::Results);
     let inner = block.inner(area);

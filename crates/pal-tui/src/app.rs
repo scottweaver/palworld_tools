@@ -268,6 +268,7 @@ impl<'db> App<'db> {
             label: label.clone(),
             goal_species: target.clone(),
             goal_passives: self.selected_passives.clone(),
+            goal_progenitors: self.progenitors.clone(),
             expected_eggs: plan.expected_eggs,
             steps: plan.steps,
             root: plan.root.clone(),
@@ -375,8 +376,57 @@ impl<'db> App<'db> {
                     self.toggle_passive(skill.name.clone(), &skill.display_name);
                 }
             }
+            Pane::Results if self.viewing_saved => self.load_saved_plan(),
             Pane::Results => self.run_search(),
         }
+    }
+
+    /// Enter on a library entry: restore the saved goal and re-plan
+    /// against the current box, reporting how the cost moved. The
+    /// original stays in the library untouched.
+    fn load_saved_plan(&mut self) {
+        let Some(saved) = self.saved.plans.get(self.saved_cursor).cloned() else {
+            return;
+        };
+        self.target = Some(saved.goal_species.clone());
+        self.selected_passives = saved.goal_passives.clone();
+        self.progenitors = saved.goal_progenitors.clone();
+        self.viewing_saved = false;
+        self.search(true);
+        self.status = match self.plans.first() {
+            Some(best) => format!(
+                "re-planned \"{}\": best {:.2} eggs now (saved plan was {:.2})",
+                saved.label, best.expected_eggs, saved.expected_eggs
+            ),
+            None => format!(
+                "re-planned \"{}\": no plans with the current box (saved plan was {:.2} eggs)",
+                saved.label, saved.expected_eggs
+            ),
+        };
+    }
+
+    /// Owned pals in a saved plan's tree that no longer exist in the
+    /// current pool — the plan's staleness measure.
+    #[must_use]
+    pub fn stale_leaves(&self, saved: &SavedPlan) -> usize {
+        fn walk(node: &pal_solver::search::PlanNode, owned: &[OwnedPal], missing: &mut usize) {
+            match node {
+                pal_solver::search::PlanNode::Owned(pal) => {
+                    if !owned.contains(pal) {
+                        *missing += 1;
+                    }
+                }
+                pal_solver::search::PlanNode::Bred(bred) => {
+                    walk(&bred.male, owned, missing);
+                    walk(&bred.female, owned, missing);
+                }
+                pal_solver::search::PlanNode::Wild(_)
+                | pal_solver::search::PlanNode::Progenitor(_) => {}
+            }
+        }
+        let mut missing = 0;
+        walk(&saved.root, &self.owned, &mut missing);
+        missing
     }
 
     fn toggle_passive(&mut self, name: PassiveName, display: &str) {
@@ -725,6 +775,84 @@ mod tests {
         // Changing the live question leaves the library view.
         app.handle_key(key(KeyCode::F(2)));
         assert!(!app.viewing_saved);
+    }
+
+    #[test]
+    fn enter_on_a_saved_plan_restores_the_goal_and_replans() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+
+        // Save a Daedream plan, then move the live goal elsewhere.
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::F(8)));
+        app.species_filter.clear();
+        for c in "fuack".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.target, Some(PalName::new("BluePlatypus")));
+
+        // Enter in the library restores the saved goal and re-plans.
+        app.handle_key(key(KeyCode::F(9)));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.viewing_saved);
+        assert_eq!(app.target, Some(PalName::new("DreamDemon")));
+        assert!(!app.plans.is_empty());
+        assert!(app.status.contains("re-planned"));
+        assert!(app.status.contains("saved plan was"));
+        // The original stays in the library.
+        assert_eq!(app.saved.plans.len(), 1);
+    }
+
+    #[test]
+    fn stale_leaves_count_pals_missing_from_the_current_box() {
+        let f = fixture();
+        let lamball = OwnedPal {
+            species: PalName::new("SheepBall"),
+            gender: Gender::Male,
+            passives: Vec::new(),
+        };
+        let cattiva = OwnedPal {
+            species: PalName::new("PinkCat"),
+            gender: Gender::Female,
+            passives: Vec::new(),
+        };
+        let saved = SavedPlan {
+            label: "test".to_owned(),
+            goal_species: PalName::new("DreamDemon"),
+            goal_passives: Vec::new(),
+            goal_progenitors: Vec::new(),
+            expected_eggs: 1.0,
+            steps: 1,
+            root: pal_solver::search::PlanNode::Bred(Box::new(pal_solver::search::BredNode {
+                male: pal_solver::search::PlanNode::Owned(lamball.clone()),
+                female: pal_solver::search::PlanNode::Owned(cattiva.clone()),
+                species: PalName::new("DreamDemon"),
+                carried_passives: Vec::new(),
+            })),
+        };
+
+        let app = App::new(f.solver, vec![lamball.clone(), cattiva], test_store());
+        assert_eq!(app.stale_leaves(&saved), 0);
+
+        // Cattiva left the box: one leaf goes stale.
+        let app = App::new(f.solver, vec![lamball], test_store());
+        assert_eq!(app.stale_leaves(&saved), 1);
     }
 
     #[test]

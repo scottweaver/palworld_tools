@@ -162,8 +162,17 @@ like `pals.toml`). `F9` flips the Plans pane to the library, where
 `↑`/`↓`/click browse and `Delete` removes the highlighted entry.
 Saved plans are fully self-contained — the whole tree with species,
 genders, and passives — so they stay readable even after your box
-changes. Changing anything about the live search flips you back to
-live results.
+changes.
+
+The library shows the **original** plan, with a staleness banner:
+`✓` when every pal in it still exists in your current box, `⚠ N
+pal(s) no longer in your box` when the world has moved. Pressing
+`Enter` on a saved plan **re-plans it**: the saved goal (target,
+passives, progenitor marks) is restored and searched against your
+current box, and the status line compares the fresh best cost with
+what you saved. The original stays in the library untouched.
+Changing anything about the live search flips you back to live
+results.
 
 ### Wild-capture mode
 

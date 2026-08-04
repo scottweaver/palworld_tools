@@ -1,0 +1,234 @@
+[
+  {
+    "label": "Knocklem Ignis — 3 step(s), 17.14 eggs, 4 passive(s)",
+    "goal_species": "WingGolem_Fire",
+    "goal_passives": [
+      "PAL_ALLAttack_up3",
+      "Deffence_up3",
+      "Legend",
+      "CoolTimeReduction_Up_1"
+    ],
+    "expected_eggs": 17.142857142857142,
+    "steps": 3,
+    "root": {
+      "Bred": {
+        "male": {
+          "Bred": {
+            "male": {
+              "Bred": {
+                "male": {
+                  "Owned": {
+                    "species": "GhostDragon",
+                    "gender": "Male",
+                    "passives": [
+                      "Legend"
+                    ]
+                  }
+                },
+                "female": {
+                  "Owned": {
+                    "species": "WingGolem_Fire",
+                    "gender": "Female",
+                    "passives": [
+                      "CoolTimeReduction_Up_1"
+                    ]
+                  }
+                },
+                "species": "WingGolem",
+                "carried_passives": [
+                  "Legend",
+                  "CoolTimeReduction_Up_1"
+                ]
+              }
+            },
+            "female": {
+              "Owned": {
+                "species": "RedArmorBird",
+                "gender": "Female",
+                "passives": [
+                  "PAL_ALLAttack_up3"
+                ]
+              }
+            },
+            "species": "WingGolem_Fire",
+            "carried_passives": [
+              "PAL_ALLAttack_up3",
+              "Legend",
+              "CoolTimeReduction_Up_1"
+            ]
+          }
+        },
+        "female": {
+          "Owned": {
+            "species": "WingGolem_Fire",
+            "gender": "Female",
+            "passives": [
+              "Deffence_up3"
+            ]
+          }
+        },
+        "species": "WingGolem_Fire",
+        "carried_passives": [
+          "PAL_ALLAttack_up3",
+          "Deffence_up3",
+          "Legend",
+          "CoolTimeReduction_Up_1"
+        ]
+      }
+    }
+  },
+  {
+    "label": "Azurmane — 3 step(s), 15.71 eggs, 4 passive(s)",
+    "goal_species": "BlueThunderHorse",
+    "goal_passives": [
+      "PAL_ALLAttack_up3",
+      "Deffence_up3",
+      "Legend",
+      "CoolTimeReduction_Up_1"
+    ],
+    "expected_eggs": 15.714285714285714,
+    "steps": 3,
+    "root": {
+      "Bred": {
+        "male": {
+          "Bred": {
+            "male": {
+              "Owned": {
+                "species": "GhostDragon",
+                "gender": "Male",
+                "passives": [
+                  "Legend"
+                ]
+              }
+            },
+            "female": {
+              "Owned": {
+                "species": "WingGolem_Fire",
+                "gender": "Female",
+                "passives": [
+                  "Deffence_up3"
+                ]
+              }
+            },
+            "species": "WingGolem",
+            "carried_passives": [
+              "Deffence_up3",
+              "Legend"
+            ]
+          }
+        },
+        "female": {
+          "Bred": {
+            "male": {
+              "Owned": {
+                "species": "WingGolem_Fire",
+                "gender": "Male",
+                "passives": [
+                  "PAL_ALLAttack_up3"
+                ]
+              }
+            },
+            "female": {
+              "Owned": {
+                "species": "CandleGhost",
+                "gender": "Female",
+                "passives": [
+                  "CoolTimeReduction_Up_1"
+                ]
+              }
+            },
+            "species": "Umihebi",
+            "carried_passives": [
+              "PAL_ALLAttack_up3",
+              "CoolTimeReduction_Up_1"
+            ]
+          }
+        },
+        "species": "BlueThunderHorse",
+        "carried_passives": [
+          "PAL_ALLAttack_up3",
+          "Deffence_up3",
+          "Legend",
+          "CoolTimeReduction_Up_1"
+        ]
+      }
+    }
+  },
+  {
+    "label": "Azurmane — 3 step(s), 15.71 eggs, 4 passive(s)",
+    "goal_species": "BlueThunderHorse",
+    "goal_passives": [
+      "PAL_ALLAttack_up3",
+      "Deffence_up3",
+      "Legend",
+      "CoolTimeReduction_Up_1"
+    ],
+    "expected_eggs": 15.714285714285714,
+    "steps": 3,
+    "root": {
+      "Bred": {
+        "male": {
+          "Bred": {
+            "male": {
+              "Owned": {
+                "species": "GhostDragon",
+                "gender": "Male",
+                "passives": [
+                  "Legend"
+                ]
+              }
+            },
+            "female": {
+              "Owned": {
+                "species": "WingGolem_Fire",
+                "gender": "Female",
+                "passives": [
+                  "Deffence_up3"
+                ]
+              }
+            },
+            "species": "WingGolem",
+            "carried_passives": [
+              "Deffence_up3",
+              "Legend"
+            ]
+          }
+        },
+        "female": {
+          "Bred": {
+            "male": {
+              "Owned": {
+                "species": "WingGolem_Fire",
+                "gender": "Male",
+                "passives": [
+                  "PAL_ALLAttack_up3"
+                ]
+              }
+            },
+            "female": {
+              "Owned": {
+                "species": "CandleGhost",
+                "gender": "Female",
+                "passives": [
+                  "CoolTimeReduction_Up_1"
+                ]
+              }
+            },
+            "species": "Umihebi",
+            "carried_passives": [
+              "PAL_ALLAttack_up3",
+              "CoolTimeReduction_Up_1"
+            ]
+          }
+        },
+        "species": "BlueThunderHorse",
+        "carried_passives": [
+          "PAL_ALLAttack_up3",
+          "Deffence_up3",
+          "Legend",
+          "CoolTimeReduction_Up_1"
+        ]
+      }
+    }
+  }
+]
