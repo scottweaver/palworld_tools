@@ -389,8 +389,8 @@ impl<'db> App<'db> {
             return;
         };
         self.target = Some(saved.goal_species.clone());
-        self.selected_passives = saved.goal_passives.clone();
-        self.progenitors = saved.goal_progenitors.clone();
+        self.selected_passives.clone_from(&saved.goal_passives);
+        self.progenitors.clone_from(&saved.goal_progenitors);
         self.viewing_saved = false;
         self.search(true);
         self.status = match self.plans.first() {
