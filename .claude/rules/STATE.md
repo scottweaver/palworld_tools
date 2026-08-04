@@ -43,22 +43,18 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `8d299d8`, CI green, 47 tests |
-| `feat/save-import` | pal-save crate: Level.sav → owned pals | validated on real save, 54 tests green, PR pending |
+| `main` | trunk | at `afac3f0`, CI green, 54 tests |
 
 ## Next up
 
-1. Merge the `feat/save-import` PR (validated 2026-08-03 on the real
-   save: 706/706 entries, 704 pals/221 species, 0.4s parse). Design
-   decisions: gvas crate + own layer; TUI auto-detects .sav at the
-   existing pool argument; all guild-owned pals import.
-2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
-   the TUI slice over the same library APIs.
-3. Solver refinements toward palcalc parity (IVs, time-based effort,
+1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
+   the TUI slice over the same library APIs (save import included —
+   pal-save shipped in PR #17).
+2. Solver refinements toward palcalc parity (IVs, time-based effort,
    capture-effort costing for wild pals) and TUI follow-ups (in-app
    pool editing; search off the UI thread — worst-case searches are
    ~2s now, enough to warrant a worker for responsiveness).
-4. PROJECT.md carve-out gap: docs PRs carry generated
+3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
    exclude mirrors (flagged during PR #1 wrap-up).
