@@ -4,6 +4,7 @@
 
 mod app;
 mod pals_file;
+mod plan_store;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -72,8 +73,27 @@ fn main() -> Result<()> {
         ),
     };
 
-    let mut app = App::new(&solver, owned);
-    app.status = pool_status;
+    let plans_path = std::path::PathBuf::from("plans.json");
+    let (saved, store_note) = match plan_store::PlanStore::load(plans_path.clone()) {
+        Ok(store) => {
+            let note = if store.plans.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; {} saved plan(s) — F9 opens the library",
+                    store.plans.len()
+                )
+            };
+            (store, note)
+        }
+        Err(error) => (
+            plan_store::PlanStore::fresh(plans_path),
+            format!("; plans library issue: {error:#}"),
+        ),
+    };
+
+    let mut app = App::new(&solver, owned, saved);
+    app.status = format!("{pool_status}{store_note}");
 
     let mut terminal = ratatui::init();
     let mouse_capture = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
@@ -106,11 +126,25 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod test_support {
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use pal_core::model::PalDb;
     use pal_solver::child::ChildIndex;
     use pal_solver::passives::PassiveOdds;
     use pal_solver::search::Solver;
+
+    use crate::plan_store::PlanStore;
+
+    /// A fresh store on a unique scratch path per call, so tests that
+    /// persist never interfere with each other.
+    pub fn test_store() -> PlanStore {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        PlanStore::fresh(std::env::temp_dir().join(format!(
+            "pal-tui-test-store-{}-{unique}.json",
+            std::process::id()
+        )))
+    }
 
     struct Data {
         db: PalDb,

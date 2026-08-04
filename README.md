@@ -104,10 +104,12 @@ nothing to submit — pick a target and watch the Plans pane.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Delete` | Clear all progenitor marks |
+| `Delete` | Clear all progenitor marks (in the library: delete the highlighted saved plan) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
+| `F8` | Save the highlighted plan to the library |
+| `F9` | Toggle the Plans pane between live results and the saved-plan library |
 | `Esc` | Quit |
 
 Selected passives and marked progenitors **pin to the top** of their
@@ -151,6 +153,17 @@ of the F2 setting — anchors need partners), while the rest of your
 box steps aside. Note that anchors contribute their species only;
 if you also select passives, the passives must come from somewhere,
 so prefer un-anchored searches for passive goals.
+
+### The saved-plan library
+
+Found a plan you'll execute over several play sessions? `F8` saves
+the highlighted plan into `plans.json` (created next to the app,
+like `pals.toml`). `F9` flips the Plans pane to the library, where
+`↑`/`↓`/click browse and `Delete` removes the highlighted entry.
+Saved plans are fully self-contained — the whole tree with species,
+genders, and passives — so they stay readable even after your box
+changes. Changing anything about the live search flips you back to
+live results.
 
 ### Wild-capture mode
 

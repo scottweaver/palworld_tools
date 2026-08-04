@@ -54,6 +54,12 @@ the remaining stub.
   real-save searches; used to show a clean 3-desired-passive pal
   beats its junk-carrying twin (17.14 → 14.64 eggs) and that blank
   slots beat junk passives, always.
+- **2026-08-03 — Saved-plan library.** F8 bookmarks the highlighted
+  plan into `plans.json` (auto-labeled, fully self-describing tree);
+  F9 flips the Plans pane to the library; Del deletes there (still
+  clears progenitors elsewhere). Corrupt stores are backed up to
+  `.bak`, never clobbered. Serde derives added to pal-core/pal-solver
+  plan types. README updated in the same change.
 - **2026-08-03 — README + LICENSE (PR #23, merged).** Full user
   documentation (install, both pool sources, key/mouse reference,
   plan-tree legend, cost-model semantics incl. documented
@@ -128,16 +134,6 @@ the remaining stub.
   expansion relies on beam costs only improving over rounds —
   documented in search.rs; semantics pinned by the unchanged
   47-test suite.
-- **2026-08-03 — Progenitor picking (the headline flow), fixed to
-  anchor semantics (PR #13, merged).** F4 in the Pals pane marks progenitors (`[P]`
-  rows, pinned to the top; Del clears all). Marks are required
-  anchors: every plan must include each marked pal, with wild
-  partners recruited around them (`BreedingGoal.progenitors` +
-  required-bitmask beam state in the solver). First cut wrongly used
-  a closed pool — Anubis→Knocklem found nothing; both user examples
-  are now verbatim tests. Plans render as a family tree (box-drawing
-  + emoji leaf tags). Risk: progenitors carry no passives by design;
-  passive goals in this mode report guidance instead of plans.
 
 ## Blocked / waiting
 

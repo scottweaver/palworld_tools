@@ -1082,6 +1082,7 @@ version = "0.1.0"
 dependencies = [
  "pal-core",
  "rayon",
+ "serde",
  "thiserror 2.0.19",
 ]
 
@@ -1095,6 +1096,7 @@ dependencies = [
  "pal-solver",
  "ratatui",
  "serde",
+ "serde_json",
  "toml",
 ]
 

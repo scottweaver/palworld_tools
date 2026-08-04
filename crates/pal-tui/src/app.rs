@@ -9,6 +9,8 @@ use pal_solver::search::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+use crate::plan_store::{PlanStore, SavedPlan};
+
 const MAX_RESULTS: usize = 5;
 const DEFAULT_BREEDING_STEPS: usize = 3;
 pub const MIN_BREEDING_STEPS: usize = 1;
@@ -50,6 +52,11 @@ pub struct App<'db> {
     pub selected_passives: Vec<PassiveName>,
     pub plans: Vec<BreedingPlan>,
     pub plan_cursor: usize,
+    pub saved: PlanStore,
+    /// When set, the Plans pane shows the saved-plan library instead
+    /// of live search results.
+    pub viewing_saved: bool,
+    pub saved_cursor: usize,
     pub max_breeding_steps: usize,
     pub allow_wild: bool,
     pub status: String,
@@ -58,10 +65,13 @@ pub struct App<'db> {
 
 impl<'db> App<'db> {
     #[must_use]
-    pub fn new(solver: &'db Solver<'db>, owned: Vec<OwnedPal>) -> Self {
+    pub fn new(solver: &'db Solver<'db>, owned: Vec<OwnedPal>, saved: PlanStore) -> Self {
         Self {
             solver,
             owned,
+            saved,
+            viewing_saved: false,
+            saved_cursor: 0,
             focus: Pane::Pals,
             species_filter: String::new(),
             species_cursor: 0,
@@ -152,7 +162,15 @@ impl<'db> App<'db> {
             KeyCode::F(2) => self.toggle_wild(),
             KeyCode::F(4) => self.toggle_progenitor(),
             KeyCode::F(5) => self.run_search(),
-            KeyCode::Delete => self.clear_progenitors(),
+            KeyCode::F(8) => self.save_current_plan(),
+            KeyCode::F(9) => self.toggle_saved_view(),
+            KeyCode::Delete => {
+                if self.viewing_saved {
+                    self.delete_saved_plan();
+                } else {
+                    self.clear_progenitors();
+                }
+            }
             KeyCode::Backspace => {
                 if let Some(filter) = self.active_filter() {
                     filter.pop();
@@ -192,6 +210,11 @@ impl<'db> App<'db> {
                     self.confirm();
                 }
             }
+            Pane::Results if self.viewing_saved => {
+                if index < self.saved.plans.len() {
+                    self.saved_cursor = index;
+                }
+            }
             Pane::Results => {
                 if index < self.plans.len() {
                     self.plan_cursor = index;
@@ -207,12 +230,79 @@ impl<'db> App<'db> {
     /// Re-runs the search after a state change: silently when no
     /// target is picked yet (plans just stay empty), and without
     /// stealing focus — only an explicit F5/Enter jumps to Results.
+    /// Changing the live question also leaves the saved-plan view.
     fn refresh_plans(&mut self) {
+        self.viewing_saved = false;
         if self.target.is_some() {
             self.search(false);
         } else {
             self.plans.clear();
             self.plan_cursor = 0;
+        }
+    }
+
+    /// F8: bookmark the highlighted plan into the library.
+    fn save_current_plan(&mut self) {
+        if self.viewing_saved {
+            "already viewing the library — F9 returns to live plans".clone_into(&mut self.status);
+            return;
+        }
+        let (Some(target), Some(plan)) = (&self.target, self.plans.get(self.plan_cursor)) else {
+            "no plan highlighted to save".clone_into(&mut self.status);
+            return;
+        };
+        let target_display = self.solver.pal_db().pal(target).map_or_else(
+            || target.as_str().to_owned(),
+            |pal| pal.display_name.clone(),
+        );
+        let passives_note = if self.selected_passives.is_empty() {
+            String::new()
+        } else {
+            format!(", {} passive(s)", self.selected_passives.len())
+        };
+        let label = format!(
+            "{target_display} — {} step(s), {:.2} eggs{passives_note}",
+            plan.steps, plan.expected_eggs
+        );
+        let saved = SavedPlan {
+            label: label.clone(),
+            goal_species: target.clone(),
+            goal_passives: self.selected_passives.clone(),
+            expected_eggs: plan.expected_eggs,
+            steps: plan.steps,
+            root: plan.root.clone(),
+        };
+        match self.saved.add(saved) {
+            Ok(()) => self.status = format!("saved: {label}"),
+            Err(error) => self.status = format!("could not save plan: {error:#}"),
+        }
+    }
+
+    /// F9: flip the Plans pane between live results and the library.
+    fn toggle_saved_view(&mut self) {
+        self.viewing_saved = !self.viewing_saved;
+        if self.viewing_saved {
+            self.focus = Pane::Results;
+            self.saved_cursor = self
+                .saved_cursor
+                .min(self.saved.plans.len().saturating_sub(1));
+            self.status = format!("library: {} saved plan(s)", self.saved.plans.len());
+        } else {
+            "live plans".clone_into(&mut self.status);
+        }
+    }
+
+    /// Delete (library view): remove the highlighted saved plan.
+    fn delete_saved_plan(&mut self) {
+        match self.saved.remove(self.saved_cursor) {
+            Ok(Some(removed)) => {
+                self.saved_cursor = self
+                    .saved_cursor
+                    .min(self.saved.plans.len().saturating_sub(1));
+                self.status = format!("deleted: {}", removed.label);
+            }
+            Ok(None) => "nothing to delete".clone_into(&mut self.status),
+            Err(error) => self.status = format!("could not delete plan: {error:#}"),
         }
     }
 
@@ -367,11 +457,13 @@ impl<'db> App<'db> {
         let len = match self.focus {
             Pane::Pals => self.species_rows().len(),
             Pane::Passives => self.passive_rows().len(),
+            Pane::Results if self.viewing_saved => self.saved.plans.len(),
             Pane::Results => self.plans.len(),
         };
         let cursor = match self.focus {
             Pane::Pals => &mut self.species_cursor,
             Pane::Passives => &mut self.passive_cursor,
+            Pane::Results if self.viewing_saved => &mut self.saved_cursor,
             Pane::Results => &mut self.plan_cursor,
         };
         *cursor = step(*cursor, delta, len);
@@ -423,7 +515,7 @@ fn step(cursor: usize, delta: isize, len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::fixture;
+    use crate::test_support::{fixture, test_store};
     use pal_core::model::Gender;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -432,7 +524,7 @@ mod tests {
 
     fn app() -> App<'static> {
         let f = fixture();
-        App::new(f.solver, Vec::new())
+        App::new(f.solver, Vec::new(), test_store())
     }
 
     #[test]
@@ -480,7 +572,7 @@ mod tests {
     #[test]
     fn f4_marks_progenitors_and_search_starts_from_them_only() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
 
         for c in "lamball".chars() {
             app.handle_key(key(KeyCode::Char(c)));
@@ -521,7 +613,7 @@ mod tests {
     #[test]
     fn delete_clears_all_progenitors_at_once() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
 
         app.handle_key(key(KeyCode::Delete));
@@ -535,7 +627,7 @@ mod tests {
     #[test]
     fn marked_progenitors_pin_to_the_top_of_the_pals_list() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         app.progenitors = vec![PalName::new("PinkCat")];
 
         // Pinned first with no filter, ahead of alphabetical order.
@@ -552,7 +644,7 @@ mod tests {
     #[test]
     fn selected_passives_pin_to_the_top_of_the_list() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         let last = app.passive_rows().last().copied().unwrap().name.clone();
         app.selected_passives = vec![last.clone()];
 
@@ -569,7 +661,7 @@ mod tests {
     #[test]
     fn progenitor_mode_reports_that_passives_need_the_pool() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         app.progenitors = vec![PalName::new("SheepBall"), PalName::new("PinkCat")];
         app.target = Some(PalName::new("DreamDemon"));
         app.selected_passives = vec![PassiveName::new("Swift")];
@@ -591,6 +683,51 @@ mod tests {
     }
 
     #[test]
+    fn plans_save_into_the_library_and_delete_from_it() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+
+        // Nothing to save before a search.
+        app.handle_key(key(KeyCode::F(8)));
+        assert!(app.status.contains("no plan highlighted"));
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+
+        app.handle_key(key(KeyCode::F(8)));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.saved.plans[0].label.contains("Daedream"));
+        assert_eq!(app.saved.plans[0].goal_species, PalName::new("DreamDemon"));
+
+        // F9 shows the library; Del removes the highlighted entry.
+        app.handle_key(key(KeyCode::F(9)));
+        assert!(app.viewing_saved);
+        assert_eq!(app.focus, Pane::Results);
+        app.handle_key(key(KeyCode::Delete));
+        assert!(app.saved.plans.is_empty());
+        assert!(app.status.contains("deleted"));
+
+        // Changing the live question leaves the library view.
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.viewing_saved);
+    }
+
+    #[test]
     fn changes_re_search_automatically_and_never_leave_stale_plans() {
         let f = fixture();
         let owned = vec![
@@ -605,7 +742,7 @@ mod tests {
                 passives: Vec::new(),
             },
         ];
-        let mut app = App::new(f.solver, owned);
+        let mut app = App::new(f.solver, owned, test_store());
 
         // Selecting a target searches immediately, without stealing
         // focus.
@@ -641,7 +778,7 @@ mod tests {
     #[test]
     fn clicks_select_and_shift_click_marks_progenitors() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         let first = app.species_rows()[0].name.clone();
 
         app.handle_click(
@@ -685,7 +822,7 @@ mod tests {
     #[test]
     fn f2_toggles_wild_mode_and_search_honors_it() {
         let f = fixture();
-        let mut app = App::new(f.solver, Vec::new());
+        let mut app = App::new(f.solver, Vec::new(), test_store());
         assert!(!app.allow_wild, "wild mode defaults to off");
 
         app.handle_key(key(KeyCode::F(2)));
@@ -739,7 +876,7 @@ mod tests {
                 passives: Vec::new(),
             },
         ];
-        let mut app = App::new(f.solver, owned);
+        let mut app = App::new(f.solver, owned, test_store());
         // Fuack needs two generations from this pool (via Daedream).
         app.target = Some(PalName::new("BluePlatypus"));
         app.allow_wild = false;
@@ -770,7 +907,7 @@ mod tests {
                 passives: Vec::new(),
             },
         ];
-        let mut app = App::new(f.solver, owned);
+        let mut app = App::new(f.solver, owned, test_store());
         app.target = Some(PalName::new("DreamDemon"));
         app.allow_wild = false;
         app.run_search();
