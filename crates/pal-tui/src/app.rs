@@ -24,6 +24,14 @@ pub enum Pane {
     Results,
 }
 
+/// A resolved mouse click: the pane it landed in, and the list row
+/// under the pointer when it hit one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Click {
+    pub pane: Pane,
+    pub row: Option<usize>,
+}
+
 pub struct App<'db> {
     solver: &'db Solver<'db>,
     pub owned: Vec<OwnedPal>,
@@ -146,6 +154,37 @@ impl<'db> App<'db> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Mouse selection: clicking focuses the pane; clicking a row
+    /// acts on it — target in the Pals pane (⇧ marks a progenitor
+    /// instead), toggle in Passives, plan selection in Results.
+    pub fn handle_click(&mut self, click: Click, shift: bool) {
+        self.focus = click.pane;
+        let Some(index) = click.row else { return };
+        match click.pane {
+            Pane::Pals => {
+                if index < self.species_rows().len() {
+                    self.species_cursor = index;
+                    if shift {
+                        self.toggle_progenitor();
+                    } else {
+                        self.confirm();
+                    }
+                }
+            }
+            Pane::Passives => {
+                if index < self.passive_rows().len() {
+                    self.passive_cursor = index;
+                    self.confirm();
+                }
+            }
+            Pane::Results => {
+                if index < self.plans.len() {
+                    self.plan_cursor = index;
+                }
+            }
         }
     }
 
@@ -492,6 +531,50 @@ mod tests {
                 collect_progenitor_leaves(&bred.female, out);
             }
         }
+    }
+
+    #[test]
+    fn clicks_select_and_shift_click_marks_progenitors() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new());
+        let first = app.species_rows()[0].name.clone();
+
+        app.handle_click(
+            Click {
+                pane: Pane::Pals,
+                row: Some(0),
+            },
+            false,
+        );
+        assert_eq!(app.focus, Pane::Pals);
+        assert_eq!(app.target, Some(first.clone()));
+
+        app.handle_click(
+            Click {
+                pane: Pane::Pals,
+                row: Some(0),
+            },
+            true,
+        );
+        assert_eq!(app.progenitors, vec![first]);
+
+        app.handle_click(
+            Click {
+                pane: Pane::Passives,
+                row: Some(0),
+            },
+            false,
+        );
+        assert_eq!(app.selected_passives.len(), 1);
+
+        app.handle_click(
+            Click {
+                pane: Pane::Results,
+                row: None,
+            },
+            false,
+        );
+        assert_eq!(app.focus, Pane::Results);
     }
 
     #[test]

@@ -61,6 +61,13 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Mouse support in the TUI.** Left-click focuses a
+  pane and acts on the row under the pointer (target in Pals, toggle
+  in Passives, plan selection in Results); ⇧click marks a progenitor.
+  Hit-testing shares the draw geometry (`pane_areas`) and replicates
+  ratatui's keep-selection-visible scroll offset. Risk: some
+  terminals reserve ⇧click for native text selection — F4 remains
+  the fallback.
 - **2026-08-03 — Passive tier colors in the TUI (PR #19, merged).**
   Passives render
   in the game's palette everywhere they appear (Passives pane + plan

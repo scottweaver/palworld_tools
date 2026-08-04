@@ -11,7 +11,12 @@ use pal_solver::child::ChildIndex;
 use pal_solver::passives::PassiveOdds;
 use pal_solver::search::Solver;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, KeyModifiers, MouseButton,
+    MouseEventKind,
+};
+use ratatui::crossterm::execute;
+use ratatui::layout::Rect;
 
 use crate::app::App;
 
@@ -71,7 +76,11 @@ fn main() -> Result<()> {
     app.status = pool_status;
 
     let mut terminal = ratatui::init();
+    let mouse_capture = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
     let result = run(&mut terminal, &mut app);
+    if mouse_capture {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
     ratatui::restore();
     result
 }
@@ -79,10 +88,16 @@ fn main() -> Result<()> {
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
-        if let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key);
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                let size = terminal.size()?;
+                let area = Rect::new(0, 0, size.width, size.height);
+                if let Some(click) = ui::locate_click(app, area, mouse.column, mouse.row) {
+                    app.handle_click(click, mouse.modifiers.contains(KeyModifiers::SHIFT));
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
