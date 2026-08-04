@@ -56,7 +56,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(app.status.as_str()), areas.status);
     frame.render_widget(
         Paragraph::new(
-            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · h/a/d IV min (⇧ lowers) · F2 wild · F5 search · F6 reload pool · F8 save plan · F9 library · Esc quit",
+            "Tab panes · type filter · Enter/click select · F4/⇧click progenitor · ^D clear/delete · ←/→ depth · h/a/d IV min (⇧ lowers) · F2 wild · F5 search · F6 reload pool · ^S save plan · ^L library · Esc quit",
         )
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,
@@ -246,7 +246,7 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
             .map(|plan| ListItem::new(plan.label.clone()))
             .collect();
         let detail = app.saved.plans.get(app.saved_cursor).map_or_else(
-                || vec![Line::from("library empty — F8 saves the highlighted plan")],
+                || vec![Line::from("library empty — Ctrl+S saves the highlighted plan")],
                 |plan| {
                     let stale = app.stale_leaves(plan);
                     let banner = if stale > 0 {
