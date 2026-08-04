@@ -15,41 +15,29 @@ Last updated: 2026-08-03
 
 ## Active workstream
 
-MVP build-out underway. PR #1 (merged 2026-08-02) landed the cargo
-workspace (pal-core / pal-solver / pal-tui / pal-gui), the vendored
-palcalc database pair (`data/db.json` + `data/breeding.json` @
-upstream `c59712e`, v27), and pal-core's typed loader —
-version-pinned, cross-reference-checked, 3 integration tests green.
-The solver is functionally complete for the MVP core (PRs #5 + #7,
-both merged 2026-08-02): `ChildIndex` + `PassiveOdds` single-pair
-primitives, `steps` reachability (BFS matrix parity-matches the
-vendored `MinBreedingSteps` on all 89,401 pairs; upstream's 10000
-unreachable-sentinel normalized to `None` in the pal-core loader),
-and `search::find_paths` (beam-pruned multi-step search over an
-owned-pal pool, ranked by expected eggs, gender-reroll costs
-modeled). The first frontend shipped in PR #9
-(merged 2026-08-02): a ratatui TUI (species picker, ≤4-passive
-picker, ranked plan trees) over an owned pool from `pals.toml`, with
-the vendored data embedded in the binary via pal-core's
-`vendored-data` feature (12 MB release binary, self-contained).
-Frontend decisions 2026-08-02: TUI first; **GUI stack (egui vs
-Tauri) deliberately deferred** until pal-gui work starts. PRs #11 +
-#13 (merged 2026-08-03; #13 superseded the auto-closed #12) made the
-TUI a full planner: ←/→ search depth 1–8, F2 wild-capture mode, F4
-progenitor anchors with required-bitmask solver support, Del
-clear-all, pinned marks, and family-tree plan rendering. 47 tests,
-CI runs `--all-features`. Scope (binding):
-umbrella Rust toolset for Palworld — breeding calculator first
-(ported from tylercamp/palcalc's design, C#/MIT), then save-file
-tools, server admin tools, pal data website. MVP ships two thin
-frontends (TUI + desktop GUI) over shared library crates; pal-gui is
+The MVP breeding calculator is feature-complete as a TUI and
+battle-tested against the user's real save (PRs #1–#21, 2026-08-02
+… 08-03). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
+typed loader, embeddable via `vendored-data`); **pal-solver**
+(parity-anchored search — arena + frontier expansion +
+species-group pruning + incumbent cut, rayon; depth ≤ 24;
+progenitor-anchor and wild-capture modes); **pal-save** (`Level.sav`
+import incl. PlM/Oodle containers and self-discovering GVAS hints;
+validated: 731 pals, 716 with passives); **pal-tui** (reactive
+planner — auto re-search on any change, mouse + ⇧click progenitors,
+tier-colored passives, pinned selections, family-tree plans, wild
+opt-in via F2). **GUI stack (egui vs Tauri) deliberately deferred**
+until pal-gui starts. 60 tests, CI runs `--all-features`. Scope
+(binding): umbrella Rust toolset for Palworld — breeding calculator
+(done as TUI), save-file tools (import done), server admin tools,
+pal data website; thin frontends over shared library crates, pal-gui
 the remaining stub.
 
 ## Branches in flight
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `118a9c0`, CI green, 55 tests |
+| `main` | trunk | at `0eb3fee`, CI green, 60 tests |
 
 ## Next up
 
@@ -67,6 +55,13 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — TUI UX batch (PR #21, merged).** Mouse support
+  (click selects, ⇧click marks progenitors), wild capture off by
+  default, target relocated to the Plans title, selected passives and
+  progenitors pinned to their list heads, reactive search (any
+  change re-plans automatically; stale Plans impossible), plus the
+  three items below. Permanent real-save diagnostics landed in
+  crates/pal-tui/tests/repro.rs.
 - **2026-08-03 — Import bug: every pal's passives silently dropped.**
   `PassiveSkillList` parses into gvas's `ArrayProperty::Names`,
   which the extractor didn't handle — all 704 pals imported
@@ -152,62 +147,6 @@ the remaining stub.
   progenitor→descendant chains were capped at a hard-coded 3. Risk:
   depth 7–8 searches on the UI thread can stall on big pools —
   worker-thread item queued in next-up.
-- **2026-08-02 — First frontend: ratatui TUI (PR #9, merged).**
-  pal-tui is a real
-  calculator now: filterable species/passive pickers, F5 search,
-  ranked plan trees with per-step carry annotations; owned pool from
-  `pals.toml` (display-name resolution via new `PalDb::find_pal`/
-  `find_passive`); vendored data embedded behind pal-core's
-  `vendored-data` feature. CI upgraded to `--all-features`. Why:
-  proves the whole stack — loader → solver → UI — as a usable tool.
-  Risk: search runs on the UI thread and rebuilds `SpeciesAdjacency`
-  per search (~100ms release) — fine now, needs a worker thread
-  before bigger pools/steps.
-- **2026-08-02 — Path search + reachability slice (PR #7,
-  merged).** `pal-solver`
-  gains `steps::MinStepsTable` (BFS parity with the vendored matrix,
-  all 89,401 pairs) and `search::find_paths` (expected-eggs-ranked
-  plans; gender rerolls and passive carry-through costed per node).
-  pal-core now normalizes upstream's 10000 "unreachable" sentinel to
-  `None` at the boundary. Why: the MVP calculator core is now
-  end-to-end — pool in, ranked breeding plans out. Risk: cost model
-  is deliberately simplified vs palcalc (eggs not wall-clock, no
-  wild pals, bred parents contribute only carried passives) —
-  documented in search.rs; revisit before claiming palcalc parity in
-  the UI.
-- **2026-08-02 — First solver slice: child lookup + passive odds
-  (PR #5, merged).**
-  `pal-solver` gains `ChildIndex` (every ordered species pair
-  resolves; the one gendered combo, Katress × Wixen, verified per
-  arrangement) and `PassiveOdds` (upstream formula ported; validated
-  entry point sums exact-total probabilities over final counts).
-  Why: these are the two primitives every breeding-path search step
-  costs out. Risk: formula parity rests on ported math + hand-derived
-  vectors, not on running PalCalc itself — if upstream changes its
-  solver, our numbers silently diverge from theirs (acceptable: the
-  vendored data pins the game build).
-- **2026-08-02 — CI gate landed (PR #3, merged).** GitHub Actions
-  workflow running fmt + clippy `-D warnings` + `cargo test
-  --workspace` on every PR and `main`; first run green in 30s. Why:
-  the docs auto-merge carve-out and every future PR now have a real
-  gate instead of a vacuous one. Risk: none noted — mirrors the
-  local tooling floor exactly.
-- **2026-08-02 — Workspace scaffold + vendored game DB (PR #1,
-  merged).** Cargo
-  workspace (4 crates), palcalc data pair vendored with MIT
-  attribution + refresh runbook (`data/README.md`), and pal-core's
-  boundary loader (newtyped model, version pin `v27`, full
-  referential cross-checks; 3 integration tests). Why: unblocks the
-  solver — typed, trusted game data is the input to everything else.
-  Risk: db schema is upstream's; a palcalc refresh can break the
-  loader — mitigated by the version pin and loud parse errors.
-- **2026-08-02 — Rules layer bootstrapped.** PROJECT.md (GitHub
-  tracker) plus METHODOLOGIES, RUST_BEST_PRACTICES, STATE,
-  ARCHITECTURE, and CLAUDE.md installed; public repo
-  `scottweaver/palworld_tools` created. Why: portable skills and
-  agent rehydration work from day one. Risk: architecture constraints
-  are young — expect renegotiation as the MVP solidifies.
-
 ## Blocked / waiting
 
 - *(nothing)*
