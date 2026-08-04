@@ -104,7 +104,7 @@ nothing to submit — pick a target and watch the Plans pane.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Delete` | Clear all progenitor marks (in the library: delete the highlighted saved plan) |
+| `Ctrl+D` (or `Delete`) | Clear all progenitor marks; in the library: delete the highlighted saved plan (`Backspace` also deletes there — the natural key on Mac laptops) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |

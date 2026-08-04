@@ -7,7 +7,7 @@ use pal_solver::passives::MAX_TOTAL_PASSIVES;
 use pal_solver::search::{
     BreedingGoal, BreedingPlan, MAX_PROGENITORS, OwnedPal, SearchConfig, Solver,
 };
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::plan_store::{PlanStore, SavedPlan};
 
@@ -164,26 +164,42 @@ impl<'db> App<'db> {
             KeyCode::F(5) => self.run_search(),
             KeyCode::F(8) => self.save_current_plan(),
             KeyCode::F(9) => self.toggle_saved_view(),
-            KeyCode::Delete => {
-                if self.viewing_saved {
-                    self.delete_saved_plan();
-                } else {
-                    self.clear_progenitors();
-                }
+            // Ctrl+D works on every keyboard; the Delete key needs
+            // Fn on Mac laptops but stays supported.
+            KeyCode::Char('d' | 'D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.contextual_delete();
             }
+            KeyCode::Delete => self.contextual_delete(),
             KeyCode::Backspace => {
-                if let Some(filter) = self.active_filter() {
+                // In the library the Mac delete key (= Backspace)
+                // deletes the highlighted plan; elsewhere it edits
+                // the focused filter.
+                if self.viewing_saved && self.focus == Pane::Results {
+                    self.delete_saved_plan();
+                } else if let Some(filter) = self.active_filter() {
                     filter.pop();
                     self.reset_cursor();
                 }
             }
             KeyCode::Char(c) => {
-                if let Some(filter) = self.active_filter() {
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && let Some(filter) = self.active_filter()
+                {
                     filter.push(c);
                     self.reset_cursor();
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Delete in context: the highlighted saved plan when the
+    /// library is open, otherwise all progenitor marks.
+    fn contextual_delete(&mut self) {
+        if self.viewing_saved {
+            self.delete_saved_plan();
+        } else {
+            self.clear_progenitors();
         }
     }
 
@@ -775,6 +791,48 @@ mod tests {
         // Changing the live question leaves the library view.
         app.handle_key(key(KeyCode::F(2)));
         assert!(!app.viewing_saved);
+    }
+
+    #[test]
+    fn ctrl_d_and_library_backspace_delete_without_a_delete_key() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+        let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+
+        // Ctrl+D clears progenitors outside the library — and the 'd'
+        // must not leak into the focused filter.
+        app.progenitors = vec![PalName::new("SheepBall")];
+        app.handle_key(ctrl_d);
+        assert!(app.progenitors.is_empty());
+        assert!(app.species_filter.is_empty());
+
+        // In the library, Ctrl+D and Backspace both delete.
+        for label in ["one", "two"] {
+            app.saved
+                .add(crate::plan_store::SavedPlan {
+                    label: (*label).to_owned(),
+                    goal_species: PalName::new("DreamDemon"),
+                    goal_passives: Vec::new(),
+                    goal_progenitors: Vec::new(),
+                    expected_eggs: 1.0,
+                    steps: 1,
+                    root: pal_solver::search::PlanNode::Wild(PalName::new("SheepBall")),
+                })
+                .unwrap();
+        }
+        app.handle_key(key(KeyCode::F(9)));
+        app.handle_key(ctrl_d);
+        assert_eq!(app.saved.plans.len(), 1);
+        app.handle_key(key(KeyCode::Backspace));
+        assert!(app.saved.plans.is_empty());
+
+        // Outside the library Backspace still edits the filter.
+        app.handle_key(key(KeyCode::F(9)));
+        app.focus = Pane::Pals;
+        app.handle_key(key(KeyCode::Char('a')));
+        app.handle_key(key(KeyCode::Backspace));
+        assert!(app.species_filter.is_empty());
+        assert!(app.progenitors.is_empty());
     }
 
     #[test]
