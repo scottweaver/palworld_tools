@@ -67,6 +67,12 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Passive tier colors in the TUI.** Passives render
+  in the game's palette everywhere they appear (Passives pane + plan
+  trees): detrimental (rank < 0) red, regular (1–3) gold, "rainbow"
+  tier (4+) teal/cyan; plan trees moved from plain strings to styled
+  spans to carry it. Risk: none noted — data-driven off
+  `PassiveSkill.rank`.
 - **2026-08-03 — Save-file import built (pal-save crate).**
   `Level.sav` → typed pals: gvas crate parses the Palworld container
   natively; `level.rs` extracts `CharacterSaveParameterMap` raw
