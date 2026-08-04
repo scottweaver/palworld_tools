@@ -201,6 +201,22 @@ impl<'db> App<'db> {
     }
 
     pub fn run_search(&mut self) {
+        self.search(true);
+    }
+
+    /// Re-runs the search after a state change: silently when no
+    /// target is picked yet (plans just stay empty), and without
+    /// stealing focus — only an explicit F5/Enter jumps to Results.
+    fn refresh_plans(&mut self) {
+        if self.target.is_some() {
+            self.search(false);
+        } else {
+            self.plans.clear();
+            self.plan_cursor = 0;
+        }
+    }
+
+    fn search(&mut self, focus_results: bool) {
         let Some(target) = self.target.clone() else {
             "pick a target pal first (Enter in the Pals pane)".clone_into(&mut self.status);
             return;
@@ -247,7 +263,7 @@ impl<'db> App<'db> {
                 };
                 self.plans = plans;
                 self.plan_cursor = 0;
-                if !self.plans.is_empty() {
+                if focus_results && !self.plans.is_empty() {
                     self.focus = Pane::Results;
                 }
             }
@@ -261,6 +277,7 @@ impl<'db> App<'db> {
                 if let Some(pal) = self.species_rows().get(self.species_cursor).copied() {
                     self.target = Some(pal.name.clone());
                     self.status = format!("target: {}", pal.display_name);
+                    self.refresh_plans();
                 }
             }
             Pane::Passives => {
@@ -276,11 +293,13 @@ impl<'db> App<'db> {
         if let Some(position) = self.selected_passives.iter().position(|p| *p == name) {
             self.selected_passives.remove(position);
             self.status = format!("dropped {display}");
+            self.refresh_plans();
         } else if self.selected_passives.len() == MAX_TOTAL_PASSIVES {
             self.status = format!("a pal carries at most {MAX_TOTAL_PASSIVES} passives");
         } else {
             self.selected_passives.push(name);
             self.status = format!("added {display}");
+            self.refresh_plans();
         }
     }
 
@@ -294,6 +313,7 @@ impl<'db> App<'db> {
         if let Some(position) = self.progenitors.iter().position(|p| *p == pal.name) {
             self.progenitors.remove(position);
             self.status = format!("progenitor removed: {}", pal.display_name);
+            self.refresh_plans();
         } else if self.progenitors.len() == MAX_PROGENITORS {
             self.status = format!("at most {MAX_PROGENITORS} progenitors");
         } else {
@@ -303,6 +323,7 @@ impl<'db> App<'db> {
                 pal.display_name,
                 self.progenitors.len()
             );
+            self.refresh_plans();
         }
     }
 
@@ -312,6 +333,7 @@ impl<'db> App<'db> {
         } else {
             self.status = format!("cleared {} progenitor(s)", self.progenitors.len());
             self.progenitors.clear();
+            self.refresh_plans();
         }
     }
 
@@ -322,17 +344,23 @@ impl<'db> App<'db> {
         } else {
             "wild pals: off — plans use only the owned pool".to_owned()
         };
+        self.refresh_plans();
     }
 
     fn adjust_depth(&mut self, delta: isize) {
-        self.max_breeding_steps = self
+        let adjusted = self
             .max_breeding_steps
             .saturating_add_signed(delta)
             .clamp(MIN_BREEDING_STEPS, MAX_BREEDING_STEPS);
+        let changed = adjusted != self.max_breeding_steps;
+        self.max_breeding_steps = adjusted;
         self.status = format!(
             "search depth: up to {} breeding step(s)",
             self.max_breeding_steps
         );
+        if changed {
+            self.refresh_plans();
+        }
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -563,6 +591,54 @@ mod tests {
     }
 
     #[test]
+    fn changes_re_search_automatically_and_never_leave_stale_plans() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned);
+
+        // Selecting a target searches immediately, without stealing
+        // focus.
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.focus, Pane::Pals);
+        assert_eq!(*app.plans[0].root.species(), PalName::new("DreamDemon"));
+
+        // Changing the target replaces the plans in place.
+        app.species_filter.clear();
+        for c in "fuack".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+        assert_eq!(*app.plans[0].root.species(), PalName::new("BluePlatypus"));
+
+        // Depth changes re-search: depth 1 cannot reach Fuack.
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(key(KeyCode::Left));
+        assert_eq!(app.max_breeding_steps, 1);
+        assert!(app.plans.is_empty());
+
+        // Toggling wild re-searches: Fuack becomes catchable.
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.plans.is_empty());
+        assert_eq!(app.plans[0].steps, 0);
+    }
+
+    #[test]
     fn clicks_select_and_shift_click_marks_progenitors() {
         let f = fixture();
         let mut app = App::new(f.solver, Vec::new());
@@ -622,9 +698,11 @@ mod tests {
         assert!(!app.plans.is_empty());
         assert_eq!(app.plans[0].steps, 0);
 
+        // Toggling back re-searches (status now reports the result,
+        // not the toggle), and the catch plan disappears.
         app.handle_key(key(KeyCode::F(2)));
         assert!(!app.allow_wild);
-        assert!(app.status.contains("off"));
+        assert!(app.plans.is_empty());
     }
 
     #[test]
