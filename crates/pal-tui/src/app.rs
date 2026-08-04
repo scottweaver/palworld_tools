@@ -108,13 +108,22 @@ impl<'db> App<'db> {
         rows
     }
 
-    /// Standard passives matching the filter, sorted by display name.
+    /// Rows for the Passives pane: selected passives pinned at the
+    /// top (in selection order, shown even when the filter would
+    /// exclude them, so each stays one keypress from deselecting),
+    /// then every standard filter match sorted by display name.
     #[must_use]
     pub fn passive_rows(&self) -> Vec<&'db PassiveSkill> {
-        let mut rows: Vec<&PassiveSkill> = self
+        let pinned: Vec<&PassiveSkill> = self
+            .selected_passives
+            .iter()
+            .filter_map(|name| self.db().passive(name))
+            .collect();
+        let mut rest: Vec<&PassiveSkill> = self
             .db()
             .passives()
             .filter(|skill| skill.standard)
+            .filter(|skill| !self.selected_passives.contains(&skill.name))
             .filter(|skill| {
                 matches_filter(
                     &self.passive_filter,
@@ -123,7 +132,9 @@ impl<'db> App<'db> {
                 )
             })
             .collect();
-        rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        rest.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        let mut rows = pinned;
+        rows.extend(rest);
         rows
     }
 
@@ -507,6 +518,23 @@ mod tests {
         assert_eq!(rows[0].name, PalName::new("PinkCat"));
         assert_eq!(rows[1].name, PalName::new("SheepBall"));
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn selected_passives_pin_to_the_top_of_the_list() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new());
+        let last = app.passive_rows().last().copied().unwrap().name.clone();
+        app.selected_passives = vec![last.clone()];
+
+        // Pinned first despite sorting last alphabetically.
+        assert_eq!(app.passive_rows()[0].name, last);
+
+        // Still pinned (and the only row) when the filter excludes it.
+        app.passive_filter = "zzz-no-such-passive".to_owned();
+        let rows = app.passive_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, last);
     }
 
     #[test]
