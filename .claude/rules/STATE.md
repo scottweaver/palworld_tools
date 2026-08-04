@@ -5,24 +5,24 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#27, 2026-08-02
+battle-tested against the user's real save (PRs #1–#29, 2026-08-02
 … 08-03). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
 species-group pruning + incumbent cut, rayon; depth ≤ 24;
-progenitor-anchor and wild-capture modes); **pal-save** (`Level.sav`
+progenitor-anchor, wild-capture, and IV-minimum modes); **pal-save** (`Level.sav`
 import incl. PlM/Oodle containers and self-discovering GVAS hints;
-validated: 731 pals, 716 with passives); **pal-tui** (reactive
+validated: 771 pals, all with IVs); **pal-tui** (reactive
 planner — auto re-search on any change, mouse + ⇧click progenitors,
 tier-colored passives, pinned selections, family-tree plans, wild
-opt-in via F2, saved-plan library, F6 pool reload). **GUI stack
-(egui vs Tauri) deliberately deferred** until pal-gui starts. 69
-tests, CI runs `--all-features`. Scope
+opt-in via F2, saved-plan library, F6 pool reload, h/a/d IV
+floors). **GUI stack (egui vs Tauri) deliberately deferred** until
+pal-gui starts. 81 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -32,30 +32,34 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `e3aa965`, CI green, 69 tests |
-| `feat/iv-thresholds` | IV threshold support (palcalc parity) | opening |
+| `main` | trunk | at `6e47199`, CI green, 81 tests |
 
 ## Next up
 
-1. IVs — in flight on `feat/iv-thresholds` (design decided
-   2026-08-03: palcalc's threshold model — per-stat minimums on the
-   target, met/not-met collapse keeps search state coarse; import
-   `Talent_HP/Shot/Defense`, `IVInheritanceWeights` already in db).
-2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
+1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
    pal-save shipped in PR #17).
-3. Remaining solver refinements toward palcalc parity (time-based
+2. Remaining solver refinements toward palcalc parity (time-based
    effort, capture-effort costing for wild pals) and TUI follow-ups
    (in-app pool editing; search off the UI thread — worst-case
    searches are ~2s now, enough to warrant a worker for
    responsiveness).
-4. PROJECT.md carve-out gap: docs PRs carry generated
+3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
    exclude mirrors (flagged during PR #1 wrap-up).
 
 ## Most recent meaningful progress
 
+- **2026-08-04 — IV minimums (PR #29, merged).** palcalc's
+  threshold model end to end: h/a/d set per-stat floors, plans route
+  only through qualifying parents, costs absorb the 5/9-5/18-1/6
+  category roll + right-parent coins, and search state collapses IVs
+  to met/not-met bits so depth-24 stays ~0.5s. Save import extracts
+  talents (ByteProperty in current saves — caught by the new
+  IV-presence assert; 771/771 pals carry IVs). Risk: dedupe now
+  splits IV-different profiles (704 → 751 on the real box) — watch
+  pair-enumeration cost if boxes grow much larger.
 - **2026-08-03 — Saved-plan library + F6 pool reload (PR #27,
   merged).** F8 bookmarks fully self-describing plan trees into a
   stable per-user store (platform data dir; legacy `./plans.json`
@@ -133,18 +137,6 @@ the remaining stub.
   toml. Risk: hint seeds + prefixes track game version — discovery
   self-heals and `decode_issues`/`malformed_entries` make drift
   loud.
-- **2026-08-03 — Search rewritten for speed.** `Solver` struct
-  (adjacency precomputed once, per-goal distance memo); append-only
-  record arena (plan trees materialized only for results, never
-  cloned mid-search); frontier expansion (only pairs touching a
-  candidate added last round); species-group-first pair enumeration
-  with group-level child/reachability rejection; rayon across
-  groups. Depth-6 × 3-progenitor × wild went from unfinishable in
-  10+ minutes to ~1.8s (perf.rs, ignored test). Why: user-reported
-  stalls at high depth/multiple progenitors. Risk: frontier
-  expansion relies on beam costs only improving over rounds —
-  documented in search.rs; semantics pinned by the unchanged
-  47-test suite.
 
 ## Blocked / waiting
 
