@@ -1,12 +1,12 @@
 //! Rendering: pure projection of [`crate::app::App`] state onto
 //! ratatui widgets. No state lives here.
 
-use pal_core::model::{Gender, PalDb, PalName};
+use pal_core::model::{Gender, PalDb, PalName, PassiveName};
 use pal_solver::search::PlanNode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::app::{App, Pane};
@@ -86,7 +86,10 @@ fn draw_passives(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 "[ ] "
             };
-            ListItem::new(format!("{mark}{}", skill.display_name))
+            ListItem::new(Line::from(vec![
+                Span::raw(mark),
+                Span::styled(skill.display_name.clone(), rank_style(skill.rank)),
+            ]))
         })
         .collect();
     draw_filterable_list(
@@ -148,12 +151,7 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
 
     let detail: Vec<Line> = app.plans.get(app.plan_cursor).map_or_else(
         || vec![Line::from("run a search (F5) to see plans")],
-        |plan| {
-            plan_tree(app.db(), &plan.root)
-                .into_iter()
-                .map(Line::from)
-                .collect()
-        },
+        |plan| plan_tree(app.db(), &plan.root),
     );
     frame.render_widget(
         Paragraph::new(detail).wrap(Wrap { trim: false }),
@@ -172,6 +170,7 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 
 /// Family-tree rendering of a plan: the bred result on top, parents
 /// as branches (♂ first), leaves tagged by where the pal comes from.
+/// Passive names carry their in-game tier color (see [`rank_style`]).
 ///
 /// ```text
 /// 🥚 Fuack
@@ -180,7 +179,7 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 ///    ├─ ♂ ⭐ Anubis · your progenitor
 ///    ╰─ ♀ 🌿 Cattiva · catch
 /// ```
-fn plan_tree(db: &PalDb, root: &PlanNode) -> Vec<String> {
+fn plan_tree(db: &PalDb, root: &PlanNode) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     tree_lines(db, root, "", "", None, &mut lines);
     lines
@@ -192,7 +191,7 @@ fn tree_lines(
     prefix: &str,
     connector: &str,
     role: Option<Gender>,
-    out: &mut Vec<String>,
+    out: &mut Vec<Line<'static>>,
 ) {
     let role_glyph = match role {
         None => "",
@@ -200,19 +199,21 @@ fn tree_lines(
         Some(Gender::Female) => "♀ ",
     };
     let (icon, species, annotation) = match node {
-        PlanNode::Owned(pal) => ("🎒", &pal.species, passive_note(db, &pal.passives, "")),
-        PlanNode::Wild(species) => ("🌿", species, " · catch".to_owned()),
-        PlanNode::Progenitor(species) => ("⭐", species, " · your progenitor".to_owned()),
+        PlanNode::Owned(pal) => ("🎒", &pal.species, passive_spans(db, &pal.passives, "")),
+        PlanNode::Wild(species) => ("🌿", species, vec![Span::raw(" · catch")]),
+        PlanNode::Progenitor(species) => ("⭐", species, vec![Span::raw(" · your progenitor")]),
         PlanNode::Bred(bred) => (
             "🥚",
             &bred.species,
-            passive_note(db, &bred.carried_passives, "hatch for "),
+            passive_spans(db, &bred.carried_passives, "hatch for "),
         ),
     };
-    out.push(format!(
-        "{prefix}{connector}{role_glyph}{icon} {}{annotation}",
+    let mut spans = vec![Span::raw(format!(
+        "{prefix}{connector}{role_glyph}{icon} {}",
         display(db, species)
-    ));
+    ))];
+    spans.extend(annotation);
+    out.push(Line::from(spans));
 
     if let PlanNode::Bred(bred) = node {
         let child_prefix = format!(
@@ -242,16 +243,35 @@ fn tree_lines(
     }
 }
 
-fn passive_note(db: &PalDb, passives: &[pal_core::model::PassiveName], verb: &str) -> String {
-    if passives.is_empty() {
-        String::new()
+/// ` · <verb>name, name, …` with every passive name styled by tier.
+fn passive_spans(db: &PalDb, passives: &[PassiveName], verb: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (position, passive) in passives.iter().enumerate() {
+        spans.push(Span::raw(if position == 0 {
+            format!(" · {verb}")
+        } else {
+            ", ".to_owned()
+        }));
+        let style = db
+            .passive(passive)
+            .map_or_else(Style::new, |skill| rank_style(skill.rank));
+        spans.push(Span::styled(display_passive(db, passive), style));
+    }
+    spans
+}
+
+/// The game's passive-tier palette: detrimental passives (negative
+/// rank) red, regular tiers 1–3 gold, the special "rainbow" tier
+/// (rank 4+) teal.
+fn rank_style(rank: i8) -> Style {
+    if rank < 0 {
+        Style::new().fg(Color::Red)
+    } else if rank >= 4 {
+        Style::new().fg(Color::Cyan)
+    } else if rank >= 1 {
+        Style::new().fg(Color::Yellow)
     } else {
-        let names = passives
-            .iter()
-            .map(|p| display_passive(db, p))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(" · {verb}{names}")
+        Style::new()
     }
 }
 
@@ -293,8 +313,17 @@ mod tests {
             })),
         }));
 
+        let rendered: Vec<String> = plan_tree(f.db, &plan)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
         assert_eq!(
-            plan_tree(f.db, &plan),
+            rendered,
             vec![
                 "🥚 Fuack · hatch for Swift".to_owned(),
                 "├─ ♂ 🎒 Lamball · Swift".to_owned(),
@@ -303,6 +332,38 @@ mod tests {
                 "   ╰─ ♀ 🌿 Cattiva · catch".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn passive_tiers_get_their_in_game_colors() {
+        let f = fixture();
+        let by_rank = |predicate: fn(i8) -> bool| {
+            f.db.passives()
+                .find(|skill| skill.standard && predicate(skill.rank))
+                .expect("data holds passives of every tier")
+        };
+        let detrimental = by_rank(|rank| rank < 0);
+        let regular = by_rank(|rank| (1..=3).contains(&rank));
+        let rainbow = by_rank(|rank| rank >= 4);
+
+        assert_eq!(rank_style(detrimental.rank).fg, Some(Color::Red));
+        assert_eq!(rank_style(regular.rank).fg, Some(Color::Yellow));
+        assert_eq!(rank_style(rainbow.rank).fg, Some(Color::Cyan));
+
+        // The tree renderer applies the tier color to the passive
+        // span itself.
+        let plan = PlanNode::Owned(OwnedPal {
+            species: PalName::new("SheepBall"),
+            gender: pal_core::model::Gender::Male,
+            passives: vec![rainbow.name.clone()],
+        });
+        let lines = plan_tree(f.db, &plan);
+        let rainbow_span = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content == rainbow.display_name.as_str())
+            .expect("passive span present");
+        assert_eq!(rainbow_span.style.fg, Some(Color::Cyan));
     }
 
     #[test]
