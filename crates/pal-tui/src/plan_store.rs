@@ -175,6 +175,23 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "diagnostic: load a real library; set PAL_STORE_PATH (defaults to the stable path)"]
+    fn probe_real_store() {
+        let path =
+            std::env::var("PAL_STORE_PATH").map_or_else(|_| super::stable_path(), PathBuf::from);
+        println!("loading {}", path.display());
+        match PlanStore::load(path) {
+            Ok(store) => {
+                println!("{} plan(s):", store.plans.len());
+                for plan in &store.plans {
+                    println!("  - {}", plan.label);
+                }
+            }
+            Err(error) => println!("LOAD FAILED: {error:#}"),
+        }
+    }
+
+    #[test]
     fn stores_written_before_goal_progenitors_still_load() {
         let path = scratch_path("pre-progenitors.json");
         std::fs::write(
