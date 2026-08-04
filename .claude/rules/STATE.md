@@ -61,6 +61,15 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Import bug: every pal's passives silently dropped.**
+  `PassiveSkillList` parses into gvas's `ArrayProperty::Names`,
+  which the extractor didn't handle — all 704 pals imported
+  passive-less (also why passive-constrained searches returned
+  nothing). Found via a user report (Loomen + Diamond Body + Demon
+  God → no plans); fixed, revalidated (731 pals, 716 with passives),
+  and `real_save.rs` now asserts nonzero carriers. Lesson: "0
+  unknown passives" was consistent with "0 passives extracted" —
+  validation now checks presence, not just absence of errors.
 - **2026-08-03 — Depth cap 8 → 24 + incumbent cut.** With wild off
   by default, closed-pool routing can legitimately exceed the old
   7+1 bound. Solver gains a branch-and-bound cut (candidates whose
