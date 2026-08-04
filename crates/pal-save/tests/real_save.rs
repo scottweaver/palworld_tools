@@ -20,7 +20,14 @@ fn real_save_imports() {
     let bytes = fs::read(&path).expect("read the save file");
 
     let save = read_level_sav(&bytes).expect("parse Level.sav");
-    println!("characters extracted: {}", save.characters.len());
+    println!(
+        "characters extracted: {} (malformed entries: {})",
+        save.characters.len(),
+        save.malformed_entries
+    );
+    for (issue, count) in &save.decode_issues {
+        println!("decode issue ×{count}: {issue}");
+    }
     if save.discovered_hints.is_empty() {
         println!("no hints discovered beyond the seed list");
     } else {

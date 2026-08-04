@@ -11,12 +11,13 @@
 //! never committed to this repository (see ARCHITECTURE.md); CI
 //! exercises the layers below the file boundary with synthetic data.
 
+pub mod container;
 pub mod import;
 pub mod level;
 
 /// Whether `bytes` look like a Palworld `.sav` container rather than
-/// e.g. a `pals.toml`. Checks the `PlZ` magic at offset 8.
+/// e.g. a `pals.toml`. Checks the `PlZ`/`PlM`/`CNK` magic at offset 8.
 #[must_use]
 pub fn looks_like_sav(bytes: &[u8]) -> bool {
-    bytes.len() > 12 && &bytes[8..11] == b"PlZ"
+    container::has_save_magic(bytes)
 }

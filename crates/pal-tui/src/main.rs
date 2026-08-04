@@ -38,15 +38,20 @@ fn main() -> Result<()> {
                 report.skipped_players(),
                 report.skipped.len() - report.skipped_players(),
             );
-            let owned = report
-                .pals
-                .into_iter()
-                .map(|pal| pal_solver::search::OwnedPal {
+            // Identical breeding profiles are interchangeable to the
+            // solver; deduping keeps big box collections fast.
+            let mut owned: Vec<pal_solver::search::OwnedPal> = Vec::new();
+            for pal in report.pals {
+                let candidate = pal_solver::search::OwnedPal {
                     species: pal.species,
                     gender: pal.gender,
                     passives: pal.passives,
-                })
-                .collect();
+                };
+                if !owned.contains(&candidate) {
+                    owned.push(candidate);
+                }
+            }
+            let status = format!("{status}; {} unique breeding profile(s)", owned.len());
             (owned, status)
         }
         Ok(bytes) => {
