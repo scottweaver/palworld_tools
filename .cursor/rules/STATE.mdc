@@ -16,7 +16,7 @@ Last updated: 2026-08-03
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#21, 2026-08-02
+battle-tested against the user's real save (PRs #1–#27, 2026-08-02
 … 08-03). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
@@ -26,8 +26,9 @@ import incl. PlM/Oodle containers and self-discovering GVAS hints;
 validated: 731 pals, 716 with passives); **pal-tui** (reactive
 planner — auto re-search on any change, mouse + ⇧click progenitors,
 tier-colored passives, pinned selections, family-tree plans, wild
-opt-in via F2). **GUI stack (egui vs Tauri) deliberately deferred**
-until pal-gui starts. 60 tests, CI runs `--all-features`. Scope
+opt-in via F2, saved-plan library, F6 pool reload). **GUI stack
+(egui vs Tauri) deliberately deferred** until pal-gui starts. 69
+tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -37,35 +38,45 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `8f1102b`, CI green, 60 tests |
+| `main` | trunk | at `e3aa965`, CI green, 69 tests |
+| `feat/iv-thresholds` | IV threshold support (palcalc parity) | opening |
 
 ## Next up
 
-1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
+1. IVs — in flight on `feat/iv-thresholds` (design decided
+   2026-08-03: palcalc's threshold model — per-stat minimums on the
+   target, met/not-met collapse keeps search state coarse; import
+   `Talent_HP/Shot/Defense`, `IVInheritanceWeights` already in db).
+2. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
    pal-save shipped in PR #17).
-2. Solver refinements toward palcalc parity (IVs, time-based effort,
-   capture-effort costing for wild pals) and TUI follow-ups (in-app
-   pool editing; search off the UI thread — worst-case searches are
-   ~2s now, enough to warrant a worker for responsiveness).
-3. PROJECT.md carve-out gap: docs PRs carry generated
+3. Remaining solver refinements toward palcalc parity (time-based
+   effort, capture-effort costing for wild pals) and TUI follow-ups
+   (in-app pool editing; search off the UI thread — worst-case
+   searches are ~2s now, enough to warrant a worker for
+   responsiveness).
+4. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
    exclude mirrors (flagged during PR #1 wrap-up).
 
 ## Most recent meaningful progress
 
+- **2026-08-03 — Saved-plan library + F6 pool reload (PR #27,
+  merged).** F8 bookmarks fully self-describing plan trees into a
+  stable per-user store (platform data dir; legacy `./plans.json`
+  auto-migrates); F9 browses; Ctrl+D/Backspace delete (Mac
+  keyboards lack Del); Enter re-plans a saved goal against the
+  current box, with staleness banners. F6 re-imports the save/toml
+  in place — loading extracted to a shared `pool` module so reload
+  can never drift from startup. `probe_real_store` answers "where
+  are my plans and do they parse" headlessly; corrupt stores back
+  up to `.bak`, never clobbered.
 - **2026-08-03 — What-if pals in the repro harness (PR #25,
   merged).** PROBE_EXTRA injects hypothetical owned pals into
   real-save searches; used to show a clean 3-desired-passive pal
   beats its junk-carrying twin (17.14 → 14.64 eggs) and that blank
   slots beat junk passives, always.
-- **2026-08-03 — Saved-plan library.** F8 bookmarks the highlighted
-  plan into `plans.json` (auto-labeled, fully self-describing tree);
-  F9 flips the Plans pane to the library; Del deletes there (still
-  clears progenitors elsewhere). Corrupt stores are backed up to
-  `.bak`, never clobbered. Serde derives added to pal-core/pal-solver
-  plan types. README updated in the same change.
 - **2026-08-03 — README + LICENSE (PR #23, merged).** Full user
   documentation (install, both pool sources, key/mouse reference,
   plan-tree legend, cost-model semantics incl. documented
