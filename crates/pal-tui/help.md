@@ -26,6 +26,10 @@
 |---|---|
 | `:help` | This screen |
 | `:readme` | The full README, rendered in-app |
+| `:w` | Save the highlighted plan to the library (= `Ctrl+S`) |
+| `:o` | Open the saved-plan library (= `Ctrl+L`; never closes it) |
+| `:dd` | Delete the selected saved plan (library view only) |
+| `:clear` | Clear the target, progenitor marks, and passives |
 | `:q` / `:quit` | Quit |
 
 In this viewer: `↑`/`↓` and the mouse wheel scroll by line,

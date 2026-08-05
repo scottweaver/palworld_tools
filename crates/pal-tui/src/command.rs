@@ -8,6 +8,10 @@ use std::sync::OnceLock;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Command {
     Open(Doc),
+    SavePlan,
+    OpenLibrary,
+    DeletePlan,
+    ClearGoal,
     Quit,
 }
 
@@ -29,6 +33,10 @@ impl Command {
         match input.trim() {
             "help" => Ok(Self::Open(Doc::Help)),
             "readme" => Ok(Self::Open(Doc::Readme)),
+            "w" => Ok(Self::SavePlan),
+            "o" => Ok(Self::OpenLibrary),
+            "dd" => Ok(Self::DeletePlan),
+            "clear" => Ok(Self::ClearGoal),
             "q" | "quit" => Ok(Self::Quit),
             other => Err(UnknownCommand(other.to_owned())),
         }
@@ -145,6 +153,10 @@ mod tests {
     fn commands_parse_with_synonyms_and_trimmed_whitespace() {
         assert_eq!(Command::parse("help"), Ok(Command::Open(Doc::Help)));
         assert_eq!(Command::parse(" readme "), Ok(Command::Open(Doc::Readme)));
+        assert_eq!(Command::parse("w"), Ok(Command::SavePlan));
+        assert_eq!(Command::parse("o"), Ok(Command::OpenLibrary));
+        assert_eq!(Command::parse("dd"), Ok(Command::DeletePlan));
+        assert_eq!(Command::parse("clear"), Ok(Command::ClearGoal));
         assert_eq!(Command::parse("q"), Ok(Command::Quit));
         assert_eq!(Command::parse("quit"), Ok(Command::Quit));
         let unknown = Command::parse("frobnicate").unwrap_err();
