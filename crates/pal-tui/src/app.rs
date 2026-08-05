@@ -57,14 +57,6 @@ enum SearchMode {
     Deferred,
 }
 
-/// A vim-style multi-key sequence awaiting its completing keypress.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum PendingKeys {
-    /// `d` pressed in the library — a second `d` deletes the
-    /// highlighted saved plan.
-    LibraryDelete,
-}
-
 /// Background-search activity. `Awaiting` runs from request creation
 /// until the latest generation's outcome applies, and owns the
 /// spinner's frame counter — an idle app cannot have a spinner.
@@ -170,7 +162,6 @@ pub struct App<'db> {
     /// A search request built but not yet handed to the shell.
     pending_search: Option<SearchRequest>,
     activity: SearchActivity,
-    pending_keys: Option<PendingKeys>,
 }
 
 impl<'db> App<'db> {
@@ -203,33 +194,11 @@ impl<'db> App<'db> {
             latest_gen: SearchGen::default(),
             pending_search: None,
             activity: SearchActivity::Idle,
-            pending_keys: None,
         }
     }
 
     fn library_focused(&self) -> bool {
         self.viewing_saved && self.focus == Pane::Results
-    }
-
-    /// Resolves a pending key sequence against the key that followed
-    /// it. Returns true when the key was consumed: the completing
-    /// keystroke fires the sequence, `Esc` cancels it, and anything
-    /// else abandons it and falls through to normal handling.
-    fn complete_key_sequence(&mut self, pending: PendingKeys, key: KeyEvent) -> bool {
-        let PendingKeys::LibraryDelete = pending;
-        match key.code {
-            KeyCode::Char('d')
-                if self.library_focused() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.delete_saved_plan();
-                true
-            }
-            KeyCode::Esc => {
-                "delete cancelled".clone_into(&mut self.status);
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Switches searches to the request/apply protocol: [`Self::search`]
@@ -440,11 +409,6 @@ impl<'db> App<'db> {
     }
 
     fn handle_pane_key(&mut self, key: KeyEvent) {
-        if let Some(pending) = self.pending_keys.take()
-            && self.complete_key_sequence(pending, key)
-        {
-            return;
-        }
         match key.code {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Tab => self.focus = next_pane(self.focus),
@@ -474,20 +438,15 @@ impl<'db> App<'db> {
                 self.toggle_saved_view();
             }
             KeyCode::Delete => self.contextual_delete(),
-            // Vim's dd, straight from the library pane.
-            KeyCode::Char('d')
+            // Vim's x: single-key delete in the library pane. Chosen
+            // over dd because d is an IV-floor key in this pane.
+            KeyCode::Char('x')
                 if self.library_focused() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                self.pending_keys = Some(PendingKeys::LibraryDelete);
-                "d — press d again to delete the selected plan (Esc cancels)"
-                    .clone_into(&mut self.status);
+                self.delete_saved_plan();
             }
-            // IV floors belong to the live question; in the library
-            // these keys would silently yank the view back to live
-            // plans, so they stay inert there.
             KeyCode::Char(c @ ('h' | 'H' | 'a' | 'A' | 'd' | 'D'))
                 if self.focus == Pane::Results
-                    && !self.viewing_saved
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 self.adjust_iv_threshold(c);
@@ -2004,63 +1963,51 @@ mod tests {
     }
 
     #[test]
-    fn dd_in_the_library_deletes_the_selected_plan() {
+    fn x_in_the_library_deletes_the_selected_plan() {
         let mut app = app_with_saved_plans(&["one", "two"]);
         app.handle_key(key(KeyCode::F(9)));
 
-        // The first d only arms the sequence.
-        app.handle_key(key(KeyCode::Char('d')));
-        assert_eq!(app.saved.plans.len(), 2);
-        assert!(app.status.contains("press d again"));
-
-        app.handle_key(key(KeyCode::Char('d')));
+        app.handle_key(key(KeyCode::Char('x')));
         assert_eq!(app.saved.plans.len(), 1);
         assert!(app.status.contains("deleted"));
 
-        // Esc cancels the armed sequence instead of quitting.
-        app.handle_key(key(KeyCode::Char('d')));
-        app.handle_key(key(KeyCode::Esc));
-        assert!(!app.should_quit);
-        assert!(app.status.contains("cancelled"));
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(app.saved.plans.is_empty());
+
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(app.status.contains("nothing to delete"));
+    }
+
+    #[test]
+    fn x_types_into_filters_and_stays_inert_in_live_results() {
+        let mut app = app_with_saved_plans(&["one"]);
+
+        // In a filter pane, x is just a letter.
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.species_filter, "x");
         assert_eq!(app.saved.plans.len(), 1);
 
-        // Any other key abandons the sequence and acts normally.
-        app.handle_key(key(KeyCode::Char('d')));
-        app.handle_key(key(KeyCode::Up));
-        app.handle_key(key(KeyCode::Char('d')));
-        assert_eq!(app.saved.plans.len(), 1, "abandoned sequence re-arms");
-        app.handle_key(key(KeyCode::Char('d')));
-        assert!(app.saved.plans.is_empty());
-    }
-
-    #[test]
-    fn dd_outside_the_library_still_adjusts_the_defense_floor() {
-        let mut app = app_with_saved_plans(&[]);
+        // In the live Plans pane it deletes nothing.
         app.focus = Pane::Results;
-        app.handle_key(key(KeyCode::Char('d')));
-        app.handle_key(key(KeyCode::Char('d')));
-        assert_eq!(
-            app.iv_thresholds.defense,
-            Some(IvValue::try_from(20).unwrap()),
-            "live Plans pane keeps the IV keys"
-        );
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.saved.plans.len(), 1);
     }
 
     #[test]
-    fn iv_keys_stay_inert_in_the_library() {
+    fn iv_keys_fire_from_the_library_as_before() {
         let mut app = app_with_saved_plans(&["one"]);
         app.handle_key(key(KeyCode::F(9)));
 
-        app.handle_key(key(KeyCode::Char('h')));
-        app.handle_key(key(KeyCode::Char('a')));
-        assert!(
-            app.iv_thresholds.is_empty(),
-            "no floors set from the library"
+        // d adjusts the Defense floor and, because the question
+        // changed, the view returns to live plans — the pre-x
+        // behavior, restored.
+        app.handle_key(key(KeyCode::Char('d')));
+        assert_eq!(
+            app.iv_thresholds.defense,
+            Some(IvValue::try_from(10).unwrap())
         );
-        assert!(
-            app.viewing_saved,
-            "the library view must not be yanked away"
-        );
+        assert!(!app.viewing_saved);
+        assert_eq!(app.saved.plans.len(), 1, "the saved plan is untouched");
     }
 
     #[test]

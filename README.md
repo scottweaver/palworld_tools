@@ -122,7 +122,7 @@ target, progenitor marks, and passives.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Ctrl+D` (or `Delete`) | Clear progenitor marks; library: delete the plan (`Backspace`/`dd`) |
+| `Ctrl+D` (or `Delete`) | Clear progenitor marks; library: delete the plan (`Backspace`/`x`) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `h` / `a` / `d` (Plans pane) | Raise the HP/Attack/Defense IV floor by 10 (⇧ lowers; below 10 = off) |
 | `F2` | Toggle wild-capture mode |
