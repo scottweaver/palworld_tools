@@ -60,7 +60,7 @@ fn main() -> Result<()> {
                 String::new()
             } else {
                 format!(
-                    "; {} saved plan(s) — F9 opens the library",
+                    "; {} saved plan(s) — Ctrl+L opens the library",
                     store.plans.len()
                 )
             };

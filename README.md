@@ -122,8 +122,8 @@ closes it, `:q` quits).
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
 | `F6` | Reload the pool from the save/toml on disk (no restart needed) |
-| `F8` | Save the highlighted plan to the library |
-| `F9` | Toggle the Plans pane between live results and the saved-plan library |
+| `Ctrl+S` (or `F8`) | Save the highlighted plan to the library |
+| `Ctrl+L` (or `F9`) | Toggle the Plans pane between live results and the saved-plan library |
 | `:` | Open the command prompt: `:help` · `:readme` · `:q`/`:quit` |
 | `Esc` | Quit (an open prompt or viewer closes first) |
 
@@ -173,14 +173,15 @@ so prefer un-anchored searches for passive goals.
 
 ### The saved-plan library
 
-Found a plan you'll execute over several play sessions? `F8` saves
-the highlighted plan into your library. It lives at a stable
+Found a plan you'll execute over several play sessions? `Ctrl+S`
+(or `F8`) saves the highlighted plan into your library. It lives at a stable
 per-user path regardless of where you launch from — macOS:
 `~/Library/Application Support/palworld_tools/plans.json`, Linux:
 `~/.local/share/palworld_tools/plans.json`, Windows:
 `%LOCALAPPDATA%\palworld_tools\plans.json` (a legacy `./plans.json`
-migrates there automatically; `F9`'s status line shows the exact
-path). `F9` flips the Plans pane to the library, where `↑`/`↓`/click
+migrates there automatically; the library's status line shows the
+exact path). `Ctrl+L` (or `F9`) flips the Plans pane to the library,
+where `↑`/`↓`/click
 browse and `Ctrl+D`/`Backspace` removes the highlighted entry.
 Saved plans are fully self-contained — the whole tree with species,
 genders, and passives — so they stay readable even after your box
