@@ -5,13 +5,13 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#29, 2026-08-02
-… 08-03). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
+battle-tested against the user's real save (PRs #1–#32, 2026-08-02
+… 08-05). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
 species-group pruning + incumbent cut, rayon; depth ≤ 24;
@@ -20,9 +20,10 @@ import incl. PlM/Oodle containers and self-discovering GVAS hints;
 validated: 771 pals, all with IVs); **pal-tui** (reactive
 planner — auto re-search on any change, mouse + ⇧click progenitors,
 tier-colored passives, pinned selections, family-tree plans, wild
-opt-in via F2, saved-plan library, F6 pool reload, h/a/d IV
-floors). **GUI stack (egui vs Tauri) deliberately deferred** until
-pal-gui starts. 81 tests, CI runs `--all-features`. Scope
+opt-in via F2, saved-plan library incl. Ctrl+S/Ctrl+L, F6 pool
+reload, h/a/d IV floors, `:` command prompt with embedded
+:help/:readme viewer). **GUI stack (egui vs Tauri) deliberately
+deferred** until pal-gui starts. 94 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -32,7 +33,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `6e47199`, CI green, 81 tests |
+| `main` | trunk | at `998de23`, CI green, 94 tests |
 
 ## Next up
 
@@ -51,6 +52,19 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-05 — Command prompt + Ctrl shortcuts (PRs #31 + #32,
+  merged).** `:` opens a vim-style prompt: `:help` renders a new
+  embedded key/feature reference (`crates/pal-tui/help.md`),
+  `:readme` the full README, `:q`/`:quit` quits; the viewer is
+  full-screen and scrollable (keys + wheel). Rendering is
+  tui-markdown 0.3.9 (default-features off; picked for box-drawing
+  tables), with soft breaks preprocessed to hard breaks outside code
+  fences so the authored ~72-col layout survives unwrapped and
+  scroll math stays exact. Overlay state is an enum (None / Prompt /
+  Doc) that owns keys and clicks while open. #31 added Ctrl+S/Ctrl+L
+  as save/library synonyms. Risk: help.md's key table duplicates the
+  README's — both are now guarded by a ≤100-col rendered-width test,
+  but content drift needs auditing on UX changes.
 - **2026-08-04 — IV minimums (PR #29, merged).** palcalc's
   threshold model end to end: h/a/d set per-stat floors, plans route
   only through qualifying parents, costs absorb the 5/9-5/18-1/6
@@ -121,26 +135,6 @@ the remaining stub.
   tier (4+) teal/cyan; plan trees moved from plain strings to styled
   spans to carry it. Risk: none noted — data-driven off
   `PassiveSkill.rank`.
-- **2026-08-03 — Save-file import built (pal-save crate).**
-  `Level.sav` → typed pals: gvas crate parses the Palworld container
-  natively; `level.rs` extracts `CharacterSaveParameterMap` raw
-  blobs with **self-discovering struct hints** (MissingHint errors
-  drive retry, Guid backtracking, discovered hints reported);
-  `import.rs` resolves species (BOSS_/role prefixes stripped),
-  gender, and passives against PalDb with a full skip report. TUI
-  pool argument auto-detects .sav vs toml (identical profiles
-  deduped). **Validated on the real save**: PlM/Oodle container
-  support added (oozextract; the save era post-dates gvas's zlib
-  path), nested blobs decode under the file's custom versions
-  (12-vs-24-byte vector widths), 706/706 entries → 704 pals, 221
-  species, player detected, 0.4s. Why: real pools, not hand-typed
-  toml. Risk: hint seeds + prefixes track game version — discovery
-  self-heals and `decode_issues`/`malformed_entries` make drift
-  loud.
-
-## Blocked / waiting
-
-- *(nothing)*
 
 ## Maintenance
 
