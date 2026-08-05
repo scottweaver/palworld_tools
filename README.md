@@ -46,6 +46,9 @@ Rust.
   searches against a 700-pal box complete in well under a second.
 - **Reactive UI** — every change (target, passives, marks, depth,
   wild) re-plans instantly; the Plans pane never shows stale results.
+  Searches run on a background worker: a spinner in the Plans title
+  marks one in flight, the UI stays responsive throughout, and
+  changing anything mid-search supersedes it.
 - Fully self-contained binary: the game database is embedded, and
   `:help` / `:readme` render the documentation in-app.
 

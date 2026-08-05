@@ -310,9 +310,10 @@ fn draw_results(frame: &mut Frame, app: &App, area: Rect) {
             .as_ref()
             .map_or("no target", |name| display(app.db(), name));
         let title = format!(
-            " Plans — {target} · depth ≤ {} · wild {wild}{} ",
+            " Plans — {target} · depth ≤ {} · wild {wild}{}{} ",
             app.max_breeding_steps,
-            iv_title(app.iv_thresholds)
+            iv_title(app.iv_thresholds),
+            spinner_suffix(app),
         );
         let items = app
             .plans
@@ -374,6 +375,20 @@ fn plan_tree(db: &PalDb, root: &PlanNode, show_ivs: bool) -> Vec<Line<'static>> 
     let mut lines = Vec::new();
     tree_lines(db, root, show_ivs, "", "", None, &mut lines);
     lines
+}
+
+/// Braille spinner frames, advanced by the shell's timer tick.
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Title segment marking an in-flight search; empty when idle. The
+/// indicator lives in the Plans title so it never blocks the panes.
+fn spinner_suffix(app: &App) -> String {
+    app.spinner().map_or_else(String::new, |tick| {
+        format!(
+            " · {} planning…",
+            SPINNER_FRAMES[tick % SPINNER_FRAMES.len()]
+        )
+    })
 }
 
 /// Title segment for active IV minimums, hp/attack/defense order,
@@ -659,6 +674,31 @@ mod tests {
             !rendered.contains("Passives ("),
             "the viewer covers the panes"
         );
+    }
+
+    #[test]
+    fn a_running_search_spins_in_the_plans_title() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+        app.defer_searches();
+        app.target = Some(PalName::new("SheepBall"));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(!rendered.contains("planning"), "idle app shows no spinner");
+
+        app.run_search();
+        assert!(app.searching());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(rendered.contains("planning"));
+
+        let request = app.take_pending_search().unwrap();
+        app.apply_search_outcome(crate::app::run_search(f.solver, request));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(!rendered.contains("planning"), "spinner clears on apply");
     }
 
     #[test]

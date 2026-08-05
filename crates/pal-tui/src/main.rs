@@ -9,6 +9,10 @@ mod plan_store;
 mod pool;
 mod ui;
 
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use pal_solver::child::ChildIndex;
 use pal_solver::iv::IvOdds;
@@ -22,22 +26,34 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 use ratatui::layout::Rect;
 
-use crate::app::App;
+use crate::app::{App, SearchOutcome, SearchRequest};
 
 fn main() -> Result<()> {
     let pals_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "pals.toml".to_owned());
 
-    let db = pal_core::vendored::pal_db().context("parsing the embedded db.json")?;
+    // Leaked deliberately: the database and solver live for the
+    // whole process and are shared with the search worker thread,
+    // which needs 'static borrows.
+    let db: &'static pal_core::model::PalDb = Box::leak(Box::new(
+        pal_core::vendored::pal_db().context("parsing the embedded db.json")?,
+    ));
     let breeding =
-        pal_core::vendored::breeding_db(&db).context("parsing the embedded breeding.json")?;
-    let index = ChildIndex::build(&breeding).context("building the child index")?;
-    let odds = PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?;
-    let iv_odds = IvOdds::from_mechanics(db.mechanics()).context("deriving IV odds")?;
-    let solver = Solver::new(&db, &index, &odds, &iv_odds);
+        pal_core::vendored::breeding_db(db).context("parsing the embedded breeding.json")?;
+    let index: &'static ChildIndex = Box::leak(Box::new(
+        ChildIndex::build(&breeding).context("building the child index")?,
+    ));
+    let odds: &'static PassiveOdds = Box::leak(Box::new(
+        PassiveOdds::from_mechanics(db.mechanics()).context("deriving passive odds")?,
+    ));
+    let iv_odds: &'static IvOdds = Box::leak(Box::new(
+        IvOdds::from_mechanics(db.mechanics()).context("deriving IV odds")?,
+    ));
+    let solver: &'static Solver<'static> =
+        Box::leak(Box::new(Solver::new(db, index, odds, iv_odds)));
 
-    let (owned, pool_status) = match pool::load(&pals_path, &db)? {
+    let (owned, pool_status) = match pool::load(&pals_path, db)? {
         pool::Loaded::Pool { owned, status } => (owned, status),
         pool::Loaded::Missing => (
             Vec::new(),
@@ -72,13 +88,14 @@ fn main() -> Result<()> {
         ),
     };
 
-    let mut app = App::new(&solver, owned, saved);
+    let mut app = App::new(solver, owned, saved);
     app.pool_path = Some(pals_path);
     app.status = format!("{pool_status}{store_note}");
+    app.defer_searches();
 
     let mut terminal = ratatui::init();
     let mouse_capture = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
-    let result = run(&mut terminal, &mut app);
+    let result = run(&mut terminal, &mut app, solver);
     if mouse_capture {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -88,10 +105,56 @@ fn main() -> Result<()> {
 
 /// Lines a wheel notch scrolls the document viewer.
 const WHEEL_LINES: i16 = 3;
+/// Poll timeout while a search runs — the spinner's frame rate.
+const SPINNER_TICK: Duration = Duration::from_millis(80);
+/// Poll timeout when idle; only bounds how long quit-after-signal
+/// style cleanups can lag, so it may be lazy.
+const IDLE_POLL: Duration = Duration::from_millis(500);
 
-fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+/// The event loop plus the search worker. Searches run on a
+/// dedicated thread: the app parks a request, the loop ships it when
+/// the worker is free (latest-wins), and finished outcomes apply
+/// back between input events, so the UI keeps drawing and the
+/// spinner keeps spinning under a long search.
+fn run(
+    terminal: &mut DefaultTerminal,
+    app: &mut App<'static>,
+    solver: &'static Solver<'static>,
+) -> Result<()> {
+    let (request_tx, request_rx) = mpsc::channel::<SearchRequest>();
+    let (outcome_tx, outcome_rx) = mpsc::channel::<SearchOutcome>();
+    thread::spawn(move || {
+        for request in request_rx {
+            if outcome_tx.send(app::run_search(solver, request)).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut worker_busy = false;
     while !app.should_quit {
+        for outcome in outcome_rx.try_iter() {
+            worker_busy = false;
+            app.apply_search_outcome(outcome);
+        }
+        if !worker_busy
+            && let Some(request) = app.take_pending_search()
+            && request_tx.send(request).is_ok()
+        {
+            worker_busy = true;
+        }
+
         terminal.draw(|frame| ui::draw(frame, app))?;
+
+        let timeout = if app.searching() {
+            SPINNER_TICK
+        } else {
+            IDLE_POLL
+        };
+        if !event::poll(timeout)? {
+            app.on_tick();
+            continue;
+        }
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
             Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
