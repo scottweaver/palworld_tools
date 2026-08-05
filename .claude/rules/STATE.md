@@ -10,7 +10,7 @@ Last updated: 2026-08-05
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#32, 2026-08-02
+battle-tested against the user's real save (PRs #1–#35, 2026-08-02
 … 08-05). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
@@ -18,12 +18,14 @@ species-group pruning + incumbent cut, rayon; depth ≤ 24;
 progenitor-anchor, wild-capture, and IV-minimum modes); **pal-save** (`Level.sav`
 import incl. PlM/Oodle containers and self-discovering GVAS hints;
 validated: 771 pals, all with IVs); **pal-tui** (reactive
-planner — auto re-search on any change, mouse + ⇧click progenitors,
-tier-colored passives, pinned selections, family-tree plans, wild
-opt-in via F2, saved-plan library incl. Ctrl+S/Ctrl+L, F6 pool
-reload, h/a/d IV floors, `:` command prompt with embedded
-:help/:readme viewer). **GUI stack (egui vs Tauri) deliberately
-deferred** until pal-gui starts. 94 tests, CI runs `--all-features`. Scope
+planner — auto re-search on any change with searches on a background
+worker (spinner in the Plans title, latest-wins supersession), mouse
++ ⇧click progenitors, tier-colored passives, pinned selections,
+family-tree plans, wild opt-in via F2, saved-plan library incl.
+Ctrl+S/Ctrl+L and x-delete, F6 pool reload, h/a/d IV floors, `:`
+command prompt — :help/:readme embedded docs plus :w/:o/:dd/:clear
+working verbs). **GUI stack (egui vs Tauri) deliberately
+deferred** until pal-gui starts. 107 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -33,7 +35,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `998de23`, CI green, 94 tests |
+| `main` | trunk | at `5eda6bb`, CI green, 107 tests |
 
 ## Next up
 
@@ -41,10 +43,11 @@ the remaining stub.
    the TUI slice over the same library APIs (save import included —
    pal-save shipped in PR #17).
 2. Remaining solver refinements toward palcalc parity (time-based
-   effort, capture-effort costing for wild pals) and TUI follow-ups
-   (in-app pool editing; search off the UI thread — worst-case
-   searches are ~2s now, enough to warrant a worker for
-   responsiveness).
+   effort, capture-effort costing for wild pals) plus solver-level
+   search cancellation — the TUI worker discards superseded results,
+   but an in-flight deep search still runs to completion (~15s worst
+   case); a cancel check in the search loop plus the priority-queue
+   rework would end it early. TUI follow-up: in-app pool editing.
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -52,6 +55,18 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-05 — Search worker + spinner, command verbs (PRs #34 +
+  #35, merged).** Searches moved off the UI thread: App snapshots
+  each question into a generation-tagged request, a worker thread
+  computes it, and only the latest generation may apply — parked
+  requests replace (latest-wins), stale outcomes are discarded, and
+  clearing the target cancels. A braille spinner animates in the
+  Plans title; Inline mode keeps the old synchronous path for tests.
+  #34 added prompt verbs (:w save, :o open library, :dd delete,
+  :clear reset goal); a later fix made plain `x` the in-library
+  delete key after `dd` collided with the d IV-floor key. Risk: no
+  solver-level cancellation yet — a superseded deep search finishes
+  before its successor starts (Next up #2).
 - **2026-08-05 — Command prompt + Ctrl shortcuts (PRs #31 + #32,
   merged).** `:` opens a vim-style prompt: `:help` renders a new
   embedded key/feature reference (`crates/pal-tui/help.md`),
@@ -128,13 +143,6 @@ the remaining stub.
   ratatui's keep-selection-visible scroll offset. Risk: some
   terminals reserve ⇧click for native text selection — F4 remains
   the fallback.
-- **2026-08-03 — Passive tier colors in the TUI (PR #19, merged).**
-  Passives render
-  in the game's palette everywhere they appear (Passives pane + plan
-  trees): detrimental (rank < 0) red, regular (1–3) gold, "rainbow"
-  tier (4+) teal/cyan; plan trees moved from plain strings to styled
-  spans to carry it. Risk: none noted — data-driven off
-  `PassiveSkill.rank`.
 
 ## Maintenance
 
