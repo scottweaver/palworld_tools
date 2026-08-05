@@ -105,7 +105,10 @@ nothing to submit — pick a target and watch the Plans pane.
 Documentation travels with the binary: `:` opens a vim-style command
 prompt, `:help` shows the key and feature reference in-app, and
 `:readme` renders this README in a scrollable viewer (`Esc`/`q`
-closes it, `:q` quits).
+closes it, `:q` quits). The prompt also carries working verbs:
+`:w` saves the highlighted plan, `:o` opens the saved-plan library,
+`:dd` deletes the selected saved plan, and `:clear` resets the
+target, progenitor marks, and passives.
 
 ### Keys and mouse
 
@@ -124,7 +127,7 @@ closes it, `:q` quits).
 | `F6` | Reload the pool from the save/toml on disk (no restart needed) |
 | `Ctrl+S` (or `F8`) | Save the highlighted plan to the library |
 | `Ctrl+L` (or `F9`) | Toggle the Plans pane between live results and the saved-plan library |
-| `:` | Open the command prompt: `:help` · `:readme` · `:q`/`:quit` |
+| `:` | Open the command prompt (`:help` lists every command) |
 | `Esc` | Quit (an open prompt or viewer closes first) |
 
 Selected passives and marked progenitors **pin to the top** of their
