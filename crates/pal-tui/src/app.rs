@@ -10,6 +10,7 @@ use pal_solver::search::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::command::{Command, DocView};
 use crate::plan_store::{PlanStore, SavedPlan};
 
 const MAX_RESULTS: usize = 5;
@@ -34,6 +35,17 @@ pub enum Pane {
 pub struct Click {
     pub pane: Pane,
     pub row: Option<usize>,
+}
+
+/// The modal layer above the panes. Whichever layer is open owns the
+/// keyboard; the panes only see keys when no overlay is up.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Overlay {
+    None,
+    /// The `:` command line, holding the text typed so far.
+    Prompt(String),
+    /// A full-screen document viewer (`:help`, `:readme`).
+    Doc(DocView),
 }
 
 pub struct App<'db> {
@@ -66,6 +78,7 @@ pub struct App<'db> {
     pub saved_cursor: usize,
     pub max_breeding_steps: usize,
     pub allow_wild: bool,
+    pub overlay: Overlay,
     pub status: String,
     pub should_quit: bool,
 }
@@ -93,6 +106,7 @@ impl<'db> App<'db> {
             plan_cursor: 0,
             max_breeding_steps: DEFAULT_BREEDING_STEPS,
             allow_wild: false,
+            overlay: Overlay::None,
             status: String::new(),
             should_quit: false,
         }
@@ -159,6 +173,72 @@ impl<'db> App<'db> {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        match self.overlay {
+            Overlay::None => self.handle_pane_key(key),
+            Overlay::Prompt(_) => self.handle_prompt_key(key),
+            Overlay::Doc(_) => self.handle_doc_key(key),
+        }
+    }
+
+    fn handle_prompt_key(&mut self, key: KeyEvent) {
+        let Overlay::Prompt(buffer) = &mut self.overlay else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.overlay = Overlay::None,
+            KeyCode::Enter => {
+                let input = std::mem::take(buffer);
+                self.overlay = Overlay::None;
+                self.execute_command(&input);
+            }
+            // Vim behavior: erasing past the start closes the prompt.
+            KeyCode::Backspace if buffer.is_empty() => self.overlay = Overlay::None,
+            KeyCode::Backspace => {
+                buffer.pop();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => buffer.push(c),
+            _ => {}
+        }
+    }
+
+    fn handle_doc_key(&mut self, key: KeyEvent) {
+        let Overlay::Doc(view) = &mut self.overlay else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q' | 'Q') => self.overlay = Overlay::None,
+            KeyCode::Up => view.scroll_lines(-1),
+            KeyCode::Down => view.scroll_lines(1),
+            KeyCode::PageUp => view.scroll_pages(-1),
+            KeyCode::PageDown => view.scroll_pages(1),
+            KeyCode::Home => view.scroll_to_top(),
+            KeyCode::End => view.scroll_to_bottom(),
+            KeyCode::Char(':') => self.overlay = Overlay::Prompt(String::new()),
+            _ => {}
+        }
+    }
+
+    fn execute_command(&mut self, input: &str) {
+        if input.trim().is_empty() {
+            return;
+        }
+        match Command::parse(input) {
+            Ok(Command::Open(doc)) => self.overlay = Overlay::Doc(DocView::open(doc)),
+            Ok(Command::Quit) => self.should_quit = true,
+            Err(unknown) => self.status = format!("unknown command: {unknown} — try :help"),
+        }
+    }
+
+    /// Mouse-wheel input: scrolls the document viewer when one is
+    /// open; means nothing anywhere else.
+    pub fn handle_scroll(&mut self, delta: i16) {
+        match &mut self.overlay {
+            Overlay::Doc(view) => view.scroll_lines(delta),
+            Overlay::None | Overlay::Prompt(_) => {}
+        }
+    }
+
+    fn handle_pane_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Tab => self.focus = next_pane(self.focus),
@@ -205,6 +285,7 @@ impl<'db> App<'db> {
                     self.reset_cursor();
                 }
             }
+            KeyCode::Char(':') => self.overlay = Overlay::Prompt(String::new()),
             KeyCode::Char(c) => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                     && let Some(filter) = self.active_filter()
@@ -230,7 +311,12 @@ impl<'db> App<'db> {
     /// Mouse selection: clicking focuses the pane; clicking a row
     /// acts on it — target in the Pals pane (⇧ marks a progenitor
     /// instead), toggle in Passives, plan selection in Results.
+    /// An open overlay owns the screen, so clicks stop at it.
     pub fn handle_click(&mut self, click: Click, shift: bool) {
+        match self.overlay {
+            Overlay::Prompt(_) | Overlay::Doc(_) => return,
+            Overlay::None => {}
+        }
         self.focus = click.pane;
         let Some(index) = click.row else { return };
         match click.pane {
@@ -701,6 +787,7 @@ fn step(cursor: usize, delta: isize, len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::Doc;
     use crate::test_support::{fixture, test_store};
     use pal_core::model::Gender;
 
@@ -1404,5 +1491,141 @@ mod tests {
         for window in app.plans.windows(2) {
             assert!(window[0].expected_eggs <= window[1].expected_eggs);
         }
+    }
+
+    fn type_line(app: &mut App, line: &str) {
+        for c in line.chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+    }
+
+    #[test]
+    fn colon_opens_the_prompt_and_keeps_typing_out_of_filters() {
+        let mut app = app();
+        type_line(&mut app, ":help");
+        assert_eq!(app.overlay, Overlay::Prompt("help".to_owned()));
+        assert!(app.species_filter.is_empty());
+
+        // Esc cancels the prompt, not the app.
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn backspacing_past_the_start_closes_the_prompt() {
+        let mut app = app();
+        type_line(&mut app, ":x");
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.overlay, Overlay::Prompt(String::new()));
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.overlay, Overlay::None);
+    }
+
+    #[test]
+    fn help_and_readme_commands_open_the_viewer() {
+        let mut app = app();
+        type_line(&mut app, ":help");
+        app.handle_key(key(KeyCode::Enter));
+        let Overlay::Doc(view) = &app.overlay else {
+            panic!("expected the help viewer, got {:?}", app.overlay);
+        };
+        assert_eq!(view.doc, Doc::Help);
+
+        // q closes the viewer; the app stays up.
+        app.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.should_quit);
+
+        type_line(&mut app, ":readme");
+        app.handle_key(key(KeyCode::Enter));
+        let Overlay::Doc(view) = &app.overlay else {
+            panic!("expected the readme viewer, got {:?}", app.overlay);
+        };
+        assert_eq!(view.doc, Doc::Readme);
+
+        // ':' switches straight from the viewer to the prompt (so
+        // :help → :readme chains); Esc then cancels to the panes.
+        type_line(&mut app, ":");
+        assert_eq!(app.overlay, Overlay::Prompt(String::new()));
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn doc_viewer_scrolls_with_keys_and_wheel_and_clamps() {
+        let mut app = app();
+        type_line(&mut app, ":readme");
+        app.handle_key(key(KeyCode::Enter));
+        let scroll_of = |app: &App| {
+            let Overlay::Doc(view) = &app.overlay else {
+                panic!("expected an open viewer");
+            };
+            view.scroll
+        };
+
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(scroll_of(&app), 0, "clamped at the top");
+
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(scroll_of(&app), 1);
+        app.handle_scroll(3);
+        assert_eq!(scroll_of(&app), 4);
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(scroll_of(&app), 19);
+        app.handle_key(key(KeyCode::Home));
+        assert_eq!(scroll_of(&app), 0);
+
+        app.handle_key(key(KeyCode::End));
+        let bottom = scroll_of(&app);
+        assert!(bottom > 0);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(scroll_of(&app), bottom, "clamped at the bottom");
+
+        // The wheel means nothing once the viewer closes.
+        app.handle_key(key(KeyCode::Esc));
+        app.handle_scroll(3);
+        assert_eq!(app.overlay, Overlay::None);
+    }
+
+    #[test]
+    fn unknown_and_empty_commands_report_via_status() {
+        let mut app = app();
+        type_line(&mut app, ":frobnicate");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(app.status.contains("unknown command: frobnicate"));
+
+        app.status.clear();
+        type_line(&mut app, ":");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(app.status.is_empty(), "an empty line closes silently");
+    }
+
+    #[test]
+    fn q_and_quit_commands_quit_the_app() {
+        for line in [":q", ":quit"] {
+            let mut app = app();
+            type_line(&mut app, line);
+            app.handle_key(key(KeyCode::Enter));
+            assert!(app.should_quit);
+        }
+    }
+
+    #[test]
+    fn clicks_stop_at_an_open_overlay() {
+        let mut app = app();
+        type_line(&mut app, ":");
+        app.handle_click(
+            Click {
+                pane: Pane::Passives,
+                row: Some(0),
+            },
+            false,
+        );
+        assert_eq!(app.focus, Pane::Pals);
+        assert!(app.selected_passives.is_empty());
     }
 }

@@ -46,7 +46,8 @@ Rust.
   searches against a 700-pal box complete in well under a second.
 - **Reactive UI** — every change (target, passives, marks, depth,
   wild) re-plans instantly; the Plans pane never shows stale results.
-- Fully self-contained binary: the game database is embedded.
+- Fully self-contained binary: the game database is embedded, and
+  `:help` / `:readme` render the documentation in-app.
 
 ## Installation
 
@@ -101,6 +102,11 @@ skills), **Plans** (ranked results with a family-tree breakdown).
 Searches run automatically whenever the question changes. There is
 nothing to submit — pick a target and watch the Plans pane.
 
+Documentation travels with the binary: `:` opens a vim-style command
+prompt, `:help` shows the key and feature reference in-app, and
+`:readme` renders this README in a scrollable viewer (`Esc`/`q`
+closes it, `:q` quits).
+
 ### Keys and mouse
 
 | Input | Effect |
@@ -110,15 +116,16 @@ nothing to submit — pick a target and watch the Plans pane.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Ctrl+D` (or `Delete`) | Clear all progenitor marks; in the library: delete the highlighted saved plan (`Backspace` also deletes there — the natural key on Mac laptops) |
+| `Ctrl+D` (or `Delete`) | Clear progenitor marks; library: delete the plan (`Backspace` too) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
-| `h` / `a` / `d` (Plans pane) | Raise the HP / Attack / Defense IV minimum by 10 (uppercase lowers; below 10 turns it off) |
+| `h` / `a` / `d` (Plans pane) | Raise the HP/Attack/Defense IV floor by 10 (⇧ lowers; below 10 = off) |
 | `F2` | Toggle wild-capture mode |
 | `F5` | Re-run the search and jump to Results |
-| `F6` | Reload the pool from the save/toml on disk (after an in-game save — no restart needed) |
+| `F6` | Reload the pool from the save/toml on disk (no restart needed) |
 | `Ctrl+S` (or `F8`) | Save the highlighted plan to the library |
 | `Ctrl+L` (or `F9`) | Toggle the Plans pane between live results and the saved-plan library |
-| `Esc` | Quit |
+| `:` | Open the command prompt: `:help` · `:readme` · `:q`/`:quit` |
+| `Esc` | Quit (an open prompt or viewer closes first) |
 
 Selected passives and marked progenitors **pin to the top** of their
 lists (even when filtered out), so every active choice stays one
@@ -141,7 +148,7 @@ reserving it for text selection — use `F4`.
 | 🎒 | A pal you own (from the save/toml) |
 | ⭐ | A progenitor you marked |
 | 🌿 | A wild pal to catch |
-| ♂ / ♀ | Which parent slot the pal fills; bred intermediates are re-hatched until the needed gender |
+| ♂ / ♀ | Which parent slot the pal fills (intermediates re-hatch until the needed gender) |
 
 Passive names are colored by in-game tier: **teal** for the special
 "rainbow" tier (Legend, Lucky, …), **gold** for regular beneficial
@@ -181,8 +188,8 @@ genders, and passives — so they stay readable even after your box
 changes.
 
 The library shows the **original** plan, with a staleness banner:
-`✓` when every pal in it still exists in your current box, `⚠ N
-pal(s) no longer in your box` when the world has moved. Pressing
+`✓` when every pal in it still exists in your current box,
+`⚠ N pal(s) no longer in your box` when the world has moved. Pressing
 `Enter` on a saved plan **re-plans it**: the saved goal (target,
 passives, progenitor marks) is restored and searched against your
 current box, and the status line compares the fresh best cost with
@@ -245,9 +252,10 @@ the format truly moves.
 | `pal-tui` | The terminal UI |
 | `pal-gui` | Desktop GUI (planned) |
 
-Development: `cargo fmt`, `cargo clippy --all-targets --all-features
--- -D warnings`, and `cargo test --workspace --all-features` must
-pass (CI enforces all three). Real-save validation harnesses live in
+Development gates, CI-enforced: `cargo fmt`,
+`cargo clippy --all-targets --all-features -- -D warnings`, and
+`cargo test --workspace --all-features`.
+Real-save validation harnesses live in
 `crates/pal-save/tests/real_save.rs` and
 `crates/pal-tui/tests/repro.rs` (opt-in via `PAL_SAVE_PATH`; real
 saves are never committed).

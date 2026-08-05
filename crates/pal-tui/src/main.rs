@@ -3,6 +3,7 @@
 //! from `pals.toml` (optional first argument overrides the path).
 
 mod app;
+mod command;
 mod pals_file;
 mod plan_store;
 mod pool;
@@ -85,6 +86,9 @@ fn main() -> Result<()> {
     result
 }
 
+/// Lines a wheel notch scrolls the document viewer.
+const WHEEL_LINES: i16 = 3;
+
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -96,6 +100,12 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 if let Some(click) = ui::locate_click(app, area, mouse.column, mouse.row) {
                     app.handle_click(click, mouse.modifiers.contains(KeyModifiers::SHIFT));
                 }
+            }
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => {
+                app.handle_scroll(-WHEEL_LINES);
+            }
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => {
+                app.handle_scroll(WHEEL_LINES);
             }
             _ => {}
         }
