@@ -348,9 +348,51 @@ impl<'db> App<'db> {
         }
         match Command::parse(input) {
             Ok(Command::Open(doc)) => self.overlay = Overlay::Doc(DocView::open(doc)),
+            Ok(Command::SavePlan) => self.save_current_plan(),
+            Ok(Command::OpenLibrary) => self.open_library(),
+            Ok(Command::DeletePlan) => self.delete_selected_plan(),
+            Ok(Command::ClearGoal) => self.clear_goal(),
             Ok(Command::Quit) => self.should_quit = true,
             Err(unknown) => self.status = format!("unknown command: {unknown} — try :help"),
         }
+    }
+
+    /// `:o` — show the library; already viewing it is a no-op, not a
+    /// toggle (vim's `:o` opens, it never closes).
+    fn open_library(&mut self) {
+        if self.viewing_saved {
+            "already viewing the library".clone_into(&mut self.status);
+        } else {
+            self.toggle_saved_view();
+        }
+    }
+
+    /// `:dd` — delete the highlighted saved plan. Live plans are
+    /// search results and regenerate on every change, so there is
+    /// nothing to delete outside the library.
+    fn delete_selected_plan(&mut self) {
+        if self.viewing_saved {
+            self.delete_saved_plan();
+        } else {
+            "no saved plan selected — :o opens the library".clone_into(&mut self.status);
+        }
+    }
+
+    /// `:clear` — reset the breeding question: target, progenitor
+    /// marks, and selected passives. IV floors and filter text stay.
+    fn clear_goal(&mut self) {
+        let nothing_selected = self.target.is_none()
+            && self.progenitors.is_empty()
+            && self.selected_passives.is_empty();
+        if nothing_selected {
+            "nothing selected to clear".clone_into(&mut self.status);
+            return;
+        }
+        self.target = None;
+        self.progenitors.clear();
+        self.selected_passives.clear();
+        self.refresh_plans();
+        "cleared: target, progenitors, and passives".clone_into(&mut self.status);
     }
 
     /// Mouse-wheel input: scrolls the document viewer when one is
@@ -1915,6 +1957,132 @@ mod tests {
         assert!(app.status.contains("re-planned"));
         assert!(app.status.contains("saved plan was 2.00"));
         assert_eq!(app.focus, Pane::Results);
+    }
+
+    #[test]
+    fn w_saves_the_plan_and_o_opens_the_library_idempotently() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+        type_line(&mut app, "daedream");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+
+        type_line(&mut app, ":w");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.status.contains("saved"));
+
+        type_line(&mut app, ":o");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.viewing_saved);
+        assert_eq!(app.focus, Pane::Results);
+
+        // :o again keeps the library open — it never toggles closed.
+        type_line(&mut app, ":o");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.viewing_saved);
+        assert!(app.status.contains("already"));
+
+        // :w inside the library explains itself instead of saving.
+        type_line(&mut app, ":w");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.status.contains("already viewing"));
+    }
+
+    #[test]
+    fn dd_deletes_in_the_library_and_reports_elsewhere() {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+        for label in ["one", "two"] {
+            app.saved
+                .add(crate::plan_store::SavedPlan {
+                    label: (*label).to_owned(),
+                    goal_species: PalName::new("DreamDemon"),
+                    goal_passives: Vec::new(),
+                    goal_progenitors: Vec::new(),
+                    goal_iv_thresholds: IvThresholds::default(),
+                    expected_eggs: 1.0,
+                    steps: 1,
+                    root: pal_solver::search::PlanNode::Wild(PalName::new("SheepBall")),
+                })
+                .unwrap();
+        }
+
+        // Outside the library there is no saved plan selected.
+        type_line(&mut app, ":dd");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.saved.plans.len(), 2);
+        assert!(app.status.contains(":o opens the library"));
+
+        type_line(&mut app, ":o");
+        app.handle_key(key(KeyCode::Enter));
+        type_line(&mut app, ":dd");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.status.contains("deleted"));
+    }
+
+    #[test]
+    fn clear_resets_the_goal_but_keeps_filters_and_iv_floors() {
+        let f = fixture();
+        // The pool's sire carries whatever passive Enter will select
+        // (row 0 of the unfiltered list), so the passive-constrained
+        // search still finds plans.
+        let first_passive = App::new(f.solver, Vec::new(), test_store()).passive_rows()[0]
+            .name
+            .clone();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: vec![first_passive],
+                ivs: IvSpread::default(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+        type_line(&mut app, "daedream");
+        app.handle_key(key(KeyCode::Enter));
+        app.focus = Pane::Passives;
+        app.handle_key(key(KeyCode::Enter));
+        app.iv_thresholds.hp = Some(IvValue::try_from(50).unwrap());
+        assert!(app.target.is_some());
+        assert_eq!(app.selected_passives.len(), 1);
+        assert!(!app.plans.is_empty());
+
+        type_line(&mut app, ":clear");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.target.is_none());
+        assert!(app.progenitors.is_empty());
+        assert!(app.selected_passives.is_empty());
+        assert!(app.plans.is_empty());
+        assert!(app.status.contains("cleared"));
+        assert_eq!(app.species_filter, "daedream", "filters survive :clear");
+        assert!(app.iv_thresholds.hp.is_some(), "IV floors survive :clear");
+
+        type_line(&mut app, ":clear");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.status.contains("nothing selected"));
     }
 
     #[test]
