@@ -1932,6 +1932,27 @@ mod tests {
     }
 
     #[test]
+    fn clear_command_cancels_an_in_flight_search() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let in_flight = app.take_pending_search().expect("request dispatched");
+        assert!(app.searching());
+
+        type_line(&mut app, ":clear");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.searching(), ":clear must stop the spinner");
+        assert!(app.status.contains("cleared"));
+
+        app.apply_search_outcome(run_search(f.solver, in_flight));
+        assert!(app.plans.is_empty(), "cleared question must stay cleared");
+    }
+
+    #[test]
     fn deferred_replan_of_a_saved_plan_announces_the_comparison() {
         let f = fixture();
         let mut app = deferred_app_with_pool();
