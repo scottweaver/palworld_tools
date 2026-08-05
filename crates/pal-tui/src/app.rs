@@ -48,6 +48,82 @@ pub enum Overlay {
     Doc(DocView),
 }
 
+/// How searches run: `Inline` executes on the caller's thread and
+/// applies before returning (tests, degraded mode); `Deferred` parks
+/// a [`SearchRequest`] for the shell to ship to the worker thread.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SearchMode {
+    Inline,
+    Deferred,
+}
+
+/// Background-search activity. `Awaiting` runs from request creation
+/// until the latest generation's outcome applies, and owns the
+/// spinner's frame counter — an idle app cannot have a spinner.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SearchActivity {
+    Idle,
+    Awaiting { spinner_tick: usize },
+}
+
+/// Monotonic search id; only the outcome matching the latest
+/// generation may apply, so superseded searches die on arrival.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct SearchGen(u64);
+
+impl SearchGen {
+    #[must_use]
+    fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+/// How the applied outcome announces itself on the status line.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Announce {
+    Standard,
+    /// Re-planning a saved plan compares the fresh best cost with
+    /// the bookmarked one.
+    Replan {
+        label: String,
+        saved_eggs: f64,
+    },
+}
+
+/// Everything the worker needs to run one search, snapshotted at
+/// request time so the app state may keep moving underneath it.
+#[derive(Debug)]
+pub struct SearchRequest {
+    pub generation: SearchGen,
+    pool: Vec<OwnedPal>,
+    goal: BreedingGoal,
+    config: SearchConfig,
+    focus_results: bool,
+    announce: Announce,
+}
+
+/// A finished search, tagged with the request it answers.
+#[derive(Debug)]
+pub struct SearchOutcome {
+    generation: SearchGen,
+    focus_results: bool,
+    announce: Announce,
+    result: Result<Vec<BreedingPlan>, pal_solver::search::SearchError>,
+}
+
+/// Runs one search request to completion. The single execution path
+/// shared by inline mode and the worker thread.
+#[must_use]
+pub fn run_search(solver: &Solver, request: SearchRequest) -> SearchOutcome {
+    let result = solver.find_paths(&request.pool, &request.goal, &request.config);
+    SearchOutcome {
+        generation: request.generation,
+        focus_results: request.focus_results,
+        announce: request.announce,
+        result,
+    }
+}
+
 pub struct App<'db> {
     solver: &'db Solver<'db>,
     pub owned: Vec<OwnedPal>,
@@ -81,6 +157,11 @@ pub struct App<'db> {
     pub overlay: Overlay,
     pub status: String,
     pub should_quit: bool,
+    mode: SearchMode,
+    latest_gen: SearchGen,
+    /// A search request built but not yet handed to the shell.
+    pending_search: Option<SearchRequest>,
+    activity: SearchActivity,
 }
 
 impl<'db> App<'db> {
@@ -109,6 +190,53 @@ impl<'db> App<'db> {
             overlay: Overlay::None,
             status: String::new(),
             should_quit: false,
+            mode: SearchMode::Inline,
+            latest_gen: SearchGen::default(),
+            pending_search: None,
+            activity: SearchActivity::Idle,
+        }
+    }
+
+    fn library_focused(&self) -> bool {
+        self.viewing_saved && self.focus == Pane::Results
+    }
+
+    /// Switches searches to the request/apply protocol: [`Self::search`]
+    /// parks a [`SearchRequest`] that the shell ships to the worker
+    /// thread, and results land via [`Self::apply_search_outcome`].
+    pub fn defer_searches(&mut self) {
+        self.mode = SearchMode::Deferred;
+    }
+
+    /// True while a search runs (or waits to run) in the background.
+    #[must_use]
+    pub fn searching(&self) -> bool {
+        match self.activity {
+            SearchActivity::Awaiting { .. } => true,
+            SearchActivity::Idle => false,
+        }
+    }
+
+    /// The spinner's frame counter — `Some` only while a search is
+    /// awaited.
+    #[must_use]
+    pub fn spinner(&self) -> Option<usize> {
+        match self.activity {
+            SearchActivity::Awaiting { spinner_tick } => Some(spinner_tick),
+            SearchActivity::Idle => None,
+        }
+    }
+
+    /// Hands the newest undispatched request to the shell. Requests
+    /// replace each other while parked, so this is always latest-wins.
+    pub fn take_pending_search(&mut self) -> Option<SearchRequest> {
+        self.pending_search.take()
+    }
+
+    /// Shell timer tick: animates the spinner while a search runs.
+    pub fn on_tick(&mut self) {
+        if let SearchActivity::Awaiting { spinner_tick } = &mut self.activity {
+            *spinner_tick = spinner_tick.wrapping_add(1);
         }
     }
 
@@ -310,6 +438,13 @@ impl<'db> App<'db> {
                 self.toggle_saved_view();
             }
             KeyCode::Delete => self.contextual_delete(),
+            // Vim's x: single-key delete in the library pane. Chosen
+            // over dd because d is an IV-floor key in this pane.
+            KeyCode::Char('x')
+                if self.library_focused() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.delete_saved_plan();
+            }
             KeyCode::Char(c @ ('h' | 'H' | 'a' | 'A' | 'd' | 'D'))
                 if self.focus == Pane::Results
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
@@ -410,6 +545,7 @@ impl<'db> App<'db> {
         } else {
             self.plans.clear();
             self.plan_cursor = 0;
+            self.cancel_pending_search();
         }
     }
 
@@ -513,6 +649,10 @@ impl<'db> App<'db> {
     }
 
     fn search(&mut self, focus_results: bool) {
+        self.search_announcing(focus_results, Announce::Standard);
+    }
+
+    fn search_announcing(&mut self, focus_results: bool, announce: Announce) {
         let Some(target) = self.target.clone() else {
             "pick a target pal first (Enter in the Pals pane)".clone_into(&mut self.status);
             return;
@@ -536,37 +676,92 @@ impl<'db> App<'db> {
             // are the only source once the toml pool steps aside.
             allow_wild_pals: self.allow_wild || progenitor_mode,
         };
-        match self.solver.find_paths(&pool, &goal, &config) {
+        self.latest_gen = self.latest_gen.next();
+        let request = SearchRequest {
+            generation: self.latest_gen,
+            pool,
+            goal,
+            config,
+            focus_results,
+            announce,
+        };
+        match self.mode {
+            SearchMode::Inline => {
+                let outcome = run_search(self.solver, request);
+                self.apply_search_outcome(outcome);
+            }
+            SearchMode::Deferred => {
+                // A superseding request keeps the spinner's phase.
+                let spinner_tick = self.spinner().unwrap_or(0);
+                self.activity = SearchActivity::Awaiting { spinner_tick };
+                self.pending_search = Some(request);
+            }
+        }
+    }
+
+    /// Drops any parked request and invalidates whatever the worker
+    /// is still computing, so a stale outcome can never apply.
+    fn cancel_pending_search(&mut self) {
+        self.latest_gen = self.latest_gen.next();
+        self.pending_search = None;
+        self.activity = SearchActivity::Idle;
+    }
+
+    /// Lands a finished search. Anything but the latest generation is
+    /// a superseded question and is discarded unapplied.
+    pub fn apply_search_outcome(&mut self, outcome: SearchOutcome) {
+        if outcome.generation != self.latest_gen {
+            return;
+        }
+        self.activity = SearchActivity::Idle;
+        match outcome.result {
             Ok(plans) => {
-                self.status = if plans.is_empty() {
-                    if progenitor_mode
-                        && (!self.selected_passives.is_empty() || !self.iv_thresholds.is_empty())
-                    {
-                        "no plans — progenitor pals carry no passives or IVs; \
-                         drop those requirements or plan from the pool"
-                            .to_owned()
-                    } else {
-                        format!(
-                            "no plans within {} step(s) — raise the depth with → or check the pool",
-                            self.max_breeding_steps
-                        )
-                    }
-                } else if progenitor_mode {
-                    format!(
-                        "{} plan(s) from {} progenitor pal(s)",
-                        plans.len(),
-                        self.progenitors.len()
-                    )
-                } else {
-                    format!("{} plan(s) found", plans.len())
-                };
+                self.status = self.describe_plans(&plans, &outcome.announce);
                 self.plans = plans;
                 self.plan_cursor = 0;
-                if focus_results && !self.plans.is_empty() {
+                if outcome.focus_results && !self.plans.is_empty() {
                     self.focus = Pane::Results;
                 }
             }
             Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    fn describe_plans(&self, plans: &[BreedingPlan], announce: &Announce) -> String {
+        if let Announce::Replan { label, saved_eggs } = announce {
+            return match plans.first() {
+                Some(best) => format!(
+                    "re-planned \"{label}\": best {:.2} eggs now (saved plan was {saved_eggs:.2})",
+                    best.expected_eggs
+                ),
+                None => format!(
+                    "re-planned \"{label}\": no plans with the current box \
+                     (saved plan was {saved_eggs:.2} eggs)"
+                ),
+            };
+        }
+        let progenitor_mode = !self.progenitors.is_empty();
+        if plans.is_empty() {
+            if progenitor_mode
+                && (!self.selected_passives.is_empty() || !self.iv_thresholds.is_empty())
+            {
+                "no plans — progenitor pals carry no passives or IVs; \
+                 drop those requirements or plan from the pool"
+                    .to_owned()
+            } else {
+                format!(
+                    "no plans within {} step(s) — raise the depth with → or check the pool",
+                    self.max_breeding_steps
+                )
+            }
+        } else if progenitor_mode {
+            format!(
+                "{} plan(s) from {} progenitor pal(s)",
+                plans.len(),
+                self.progenitors.len()
+            )
+        } else {
+            format!("{} plan(s) found", plans.len())
         }
     }
 
@@ -601,17 +796,13 @@ impl<'db> App<'db> {
         self.progenitors.clone_from(&saved.goal_progenitors);
         self.iv_thresholds = saved.goal_iv_thresholds;
         self.viewing_saved = false;
-        self.search(true);
-        self.status = match self.plans.first() {
-            Some(best) => format!(
-                "re-planned \"{}\": best {:.2} eggs now (saved plan was {:.2})",
-                saved.label, best.expected_eggs, saved.expected_eggs
-            ),
-            None => format!(
-                "re-planned \"{}\": no plans with the current box (saved plan was {:.2} eggs)",
-                saved.label, saved.expected_eggs
-            ),
-        };
+        self.search_announcing(
+            true,
+            Announce::Replan {
+                label: saved.label,
+                saved_eggs: saved.expected_eggs,
+            },
+        );
     }
 
     /// Owned pals in a saved plan's tree that no longer exist in the
@@ -716,11 +907,10 @@ impl<'db> App<'db> {
             self.refresh_plans();
         }
         self.status = format!(
-            "IV minimums — HP {} · Attack {} · Defense {} ({} plan(s))",
+            "IV minimums — HP {} · Attack {} · Defense {}",
             describe_threshold(self.iv_thresholds.hp),
             describe_threshold(self.iv_thresholds.attack),
             describe_threshold(self.iv_thresholds.defense),
-            self.plans.len(),
         );
     }
 
@@ -1654,6 +1844,219 @@ mod tests {
             app.handle_key(key(KeyCode::Enter));
             assert!(app.should_quit);
         }
+    }
+
+    fn deferred_app_with_pool() -> App<'static> {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+        app.defer_searches();
+        app
+    }
+
+    #[test]
+    fn deferred_searches_park_a_request_and_apply_its_outcome() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.searching());
+        assert!(app.plans.is_empty(), "plans arrive only via apply");
+        assert!(app.status.contains("target"), "status not overwritten yet");
+
+        // The spinner advances only while a search is awaited.
+        app.on_tick();
+        app.on_tick();
+        assert_eq!(app.spinner(), Some(2));
+
+        let request = app.take_pending_search().expect("request parked");
+        assert!(app.take_pending_search().is_none());
+        app.apply_search_outcome(run_search(f.solver, request));
+        assert!(!app.searching());
+        assert!(!app.plans.is_empty());
+        assert!(app.status.contains("plan(s) found"));
+
+        app.on_tick();
+        assert_eq!(app.spinner(), None, "idle apps have no spinner");
+    }
+
+    #[test]
+    fn a_superseded_search_outcome_is_discarded() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let stale = app.take_pending_search().expect("first request");
+
+        // Changing the depth re-asks the question; the parked request
+        // is replaced, not queued.
+        app.handle_key(key(KeyCode::Right));
+        let fresh = app.take_pending_search().expect("superseding request");
+
+        app.apply_search_outcome(run_search(f.solver, stale));
+        assert!(app.plans.is_empty(), "stale outcome must not apply");
+        assert!(app.searching(), "still waiting for the fresh answer");
+
+        app.apply_search_outcome(run_search(f.solver, fresh));
+        assert!(!app.plans.is_empty());
+        assert!(!app.searching());
+    }
+
+    #[test]
+    fn dropping_the_target_cancels_an_in_flight_search() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let in_flight = app.take_pending_search().expect("request dispatched");
+
+        // With no target, the next replan clears instead of searching
+        // — and must also invalidate what the worker still computes.
+        app.target = None;
+        app.handle_key(key(KeyCode::F(2)));
+        assert!(!app.searching(), "spinner must not run forever");
+
+        app.apply_search_outcome(run_search(f.solver, in_flight));
+        assert!(app.plans.is_empty(), "cancelled outcome must not apply");
+    }
+
+    fn app_with_saved_plans(labels: &[&str]) -> App<'static> {
+        let f = fixture();
+        let mut app = App::new(f.solver, Vec::new(), test_store());
+        for label in labels {
+            app.saved
+                .add(SavedPlan {
+                    label: (*label).to_owned(),
+                    goal_species: PalName::new("DreamDemon"),
+                    goal_passives: Vec::new(),
+                    goal_progenitors: Vec::new(),
+                    goal_iv_thresholds: IvThresholds::default(),
+                    expected_eggs: 1.0,
+                    steps: 1,
+                    root: pal_solver::search::PlanNode::Wild(PalName::new("SheepBall")),
+                })
+                .unwrap();
+        }
+        app
+    }
+
+    #[test]
+    fn x_in_the_library_deletes_the_selected_plan() {
+        let mut app = app_with_saved_plans(&["one", "two"]);
+        app.handle_key(key(KeyCode::F(9)));
+
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.status.contains("deleted"));
+
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(app.saved.plans.is_empty());
+
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(app.status.contains("nothing to delete"));
+    }
+
+    #[test]
+    fn x_types_into_filters_and_stays_inert_in_live_results() {
+        let mut app = app_with_saved_plans(&["one"]);
+
+        // In a filter pane, x is just a letter.
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.species_filter, "x");
+        assert_eq!(app.saved.plans.len(), 1);
+
+        // In the live Plans pane it deletes nothing.
+        app.focus = Pane::Results;
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.saved.plans.len(), 1);
+    }
+
+    #[test]
+    fn iv_keys_fire_from_the_library_as_before() {
+        let mut app = app_with_saved_plans(&["one"]);
+        app.handle_key(key(KeyCode::F(9)));
+
+        // d adjusts the Defense floor and, because the question
+        // changed, the view returns to live plans — the pre-x
+        // behavior, restored.
+        app.handle_key(key(KeyCode::Char('d')));
+        assert_eq!(
+            app.iv_thresholds.defense,
+            Some(IvValue::try_from(10).unwrap())
+        );
+        assert!(!app.viewing_saved);
+        assert_eq!(app.saved.plans.len(), 1, "the saved plan is untouched");
+    }
+
+    #[test]
+    fn clear_command_cancels_an_in_flight_search() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let in_flight = app.take_pending_search().expect("request dispatched");
+        assert!(app.searching());
+
+        type_line(&mut app, ":clear");
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.searching(), ":clear must stop the spinner");
+        assert!(app.status.contains("cleared"));
+
+        app.apply_search_outcome(run_search(f.solver, in_flight));
+        assert!(app.plans.is_empty(), "cleared question must stay cleared");
+    }
+
+    #[test]
+    fn deferred_replan_of_a_saved_plan_announces_the_comparison() {
+        let f = fixture();
+        let mut app = deferred_app_with_pool();
+        app.saved
+            .add(SavedPlan {
+                label: "Daedream — 1 step(s), 2.00 eggs".to_owned(),
+                goal_species: PalName::new("DreamDemon"),
+                goal_passives: Vec::new(),
+                goal_progenitors: Vec::new(),
+                goal_iv_thresholds: IvThresholds::default(),
+                expected_eggs: 2.0,
+                steps: 1,
+                root: pal_solver::search::PlanNode::Wild(PalName::new("SheepBall")),
+            })
+            .unwrap();
+
+        app.handle_key(key(KeyCode::F(9)));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.searching());
+
+        let request = app.take_pending_search().expect("replan request");
+        app.apply_search_outcome(run_search(f.solver, request));
+        assert!(app.status.contains("re-planned"));
+        assert!(app.status.contains("saved plan was 2.00"));
+        assert_eq!(app.focus, Pane::Results);
     }
 
     #[test]

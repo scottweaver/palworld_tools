@@ -46,6 +46,9 @@ Rust.
   searches against a 700-pal box complete in well under a second.
 - **Reactive UI** — every change (target, passives, marks, depth,
   wild) re-plans instantly; the Plans pane never shows stale results.
+  Searches run on a background worker: a spinner in the Plans title
+  marks one in flight, the UI stays responsive throughout, and
+  changing anything mid-search supersedes it.
 - Fully self-contained binary: the game database is embedded, and
   `:help` / `:readme` render the documentation in-app.
 
@@ -119,7 +122,7 @@ target, progenitor marks, and passives.
 | `↑` / `↓` | Move the cursor |
 | `Enter` or **click** | Pals: set target · Passives: toggle · Results: re-search |
 | `F4` or **⇧+click** | Toggle a progenitor mark (Pals pane) |
-| `Ctrl+D` (or `Delete`) | Clear progenitor marks; library: delete the plan (`Backspace` too) |
+| `Ctrl+D` (or `Delete`) | Clear progenitor marks; library: delete the plan (`Backspace`/`x`) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `h` / `a` / `d` (Plans pane) | Raise the HP/Attack/Defense IV floor by 10 (⇧ lowers; below 10 = off) |
 | `F2` | Toggle wild-capture mode |
