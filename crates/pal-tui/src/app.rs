@@ -179,6 +179,14 @@ impl<'db> App<'db> {
             KeyCode::Char('d' | 'D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.contextual_delete();
             }
+            // F8/F9 remain as fallbacks for terminals that swallow
+            // these Ctrl combos.
+            KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.save_current_plan();
+            }
+            KeyCode::Char('l' | 'L') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.toggle_saved_view();
+            }
             KeyCode::Delete => self.contextual_delete(),
             KeyCode::Char(c @ ('h' | 'H' | 'a' | 'A' | 'd' | 'D'))
                 if self.focus == Pane::Results
@@ -302,10 +310,12 @@ impl<'db> App<'db> {
         }
     }
 
-    /// F8: bookmark the highlighted plan into the library.
+    /// Ctrl+S (or F8): bookmark the highlighted plan into the
+    /// library.
     fn save_current_plan(&mut self) {
         if self.viewing_saved {
-            "already viewing the library — F9 returns to live plans".clone_into(&mut self.status);
+            "already viewing the library — Ctrl+L returns to live plans"
+                .clone_into(&mut self.status);
             return;
         }
         let (Some(target), Some(plan)) = (&self.target, self.plans.get(self.plan_cursor)) else {
@@ -341,7 +351,8 @@ impl<'db> App<'db> {
         }
     }
 
-    /// F9: flip the Plans pane between live results and the library.
+    /// Ctrl+L (or F9): flip the Plans pane between live results and
+    /// the library.
     fn toggle_saved_view(&mut self) {
         self.viewing_saved = !self.viewing_saved;
         if self.viewing_saved {
@@ -1023,6 +1034,51 @@ mod tests {
         // Changing the live question leaves the library view.
         app.handle_key(key(KeyCode::F(2)));
         assert!(!app.viewing_saved);
+    }
+
+    #[test]
+    fn ctrl_s_saves_and_ctrl_l_toggles_the_library() {
+        let f = fixture();
+        let owned = vec![
+            OwnedPal {
+                species: PalName::new("SheepBall"),
+                gender: Gender::Male,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+            OwnedPal {
+                species: PalName::new("PinkCat"),
+                gender: Gender::Female,
+                passives: Vec::new(),
+                ivs: IvSpread::default(),
+            },
+        ];
+        let mut app = App::new(f.solver, owned, test_store());
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+
+        for c in "daedream".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.plans.is_empty());
+
+        // Ctrl+S saves without leaking 's' into a filter.
+        app.focus = Pane::Pals;
+        app.species_filter.clear();
+        app.handle_key(ctrl('s'));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.species_filter.is_empty());
+
+        // Ctrl+L opens the library and closes it again; 'l' stays
+        // out of the filter, and plain 'l' still types.
+        app.handle_key(ctrl('l'));
+        assert!(app.viewing_saved);
+        app.handle_key(ctrl('L'));
+        assert!(!app.viewing_saved);
+        assert!(app.species_filter.is_empty());
+        app.focus = Pane::Pals;
+        app.handle_key(key(KeyCode::Char('l')));
+        assert_eq!(app.species_filter, "l");
     }
 
     #[test]
