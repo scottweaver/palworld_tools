@@ -4,6 +4,9 @@
 use std::fmt;
 use std::sync::OnceLock;
 
+use ratatui::text::Text;
+use tui_markdown::{Options, StyleSheet};
+
 /// A parsed `:` command.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Command {
@@ -60,12 +63,27 @@ impl Doc {
         }
     }
 
+    /// The document rendered for the viewer, cached for the process
+    /// lifetime so scroll math and drawing always agree on line
+    /// count (and drawing never re-parses per frame).
+    #[must_use]
+    pub fn rendered(self) -> &'static Text<'static> {
+        static HELP: OnceLock<Text<'static>> = OnceLock::new();
+        static README: OnceLock<Text<'static>> = OnceLock::new();
+        let cell = match self {
+            Self::Help => &HELP,
+            Self::Readme => &README,
+        };
+        cell.get_or_init(|| {
+            tui_markdown::from_str_with_options(self.markdown(), &Options::new(DocStyles))
+        })
+    }
+
     /// The document's markdown, preprocessed so the viewer shows the
     /// authored ~72-column line layout instead of parser-joined
     /// paragraphs (the viewer renders without wrapping, keeping
     /// tables and scroll math exact).
-    #[must_use]
-    pub fn markdown(self) -> &'static str {
+    fn markdown(self) -> &'static str {
         static HELP: OnceLock<String> = OnceLock::new();
         static README: OnceLock<String> = OnceLock::new();
         let (cell, source) = match self {
@@ -73,6 +91,22 @@ impl Doc {
             Self::Readme => (&README, include_str!("../../../README.md")),
         };
         cell.get_or_init(|| preserve_line_breaks(source))
+    }
+}
+
+/// The viewer shows a rendered document, not markdown source: drop
+/// the `#` heading markers and the code-fence delimiter lines that
+/// tui-markdown keeps by default (styling alone identifies both).
+#[derive(Clone, Copy, Debug)]
+struct DocStyles;
+
+impl StyleSheet for DocStyles {
+    fn heading_marker(&self, _level: u8) -> &'static str {
+        ""
+    }
+
+    fn code_block_fence(&self) -> &'static str {
+        ""
     }
 }
 
@@ -112,7 +146,7 @@ const PAGE_LINES: u16 = 15;
 impl DocView {
     #[must_use]
     pub fn open(doc: Doc) -> Self {
-        let line_count = u16::try_from(tui_markdown::from_str(doc.markdown()).lines.len())
+        let line_count = u16::try_from(doc.rendered().lines.len())
             .expect("embedded docs are far shorter than 65k rendered lines");
         Self {
             doc,
@@ -163,10 +197,27 @@ mod tests {
         assert_eq!(unknown.to_string(), "frobnicate");
     }
 
+    fn flatten(line: &ratatui::text::Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
     #[test]
-    fn embedded_docs_render_to_nonempty_markdown() {
+    fn docs_render_without_heading_or_fence_markers() {
         for doc in [Doc::Help, Doc::Readme] {
-            assert!(!tui_markdown::from_str(doc.markdown()).lines.is_empty());
+            let lines: Vec<String> = doc.rendered().lines.iter().map(flatten).collect();
+            assert!(!lines.is_empty());
+            assert!(
+                !lines[0].starts_with('#'),
+                "{doc:?} keeps its heading marker: {:?}",
+                lines[0]
+            );
+            assert!(
+                lines.iter().all(|line| !line.starts_with("```")),
+                "{doc:?} keeps a code-fence line"
+            );
         }
     }
 
@@ -181,12 +232,7 @@ mod tests {
         let rendered: Vec<String> = tui_markdown::from_str(&processed)
             .lines
             .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
+            .map(flatten)
             .collect();
         assert!(rendered.contains(&"para line one".to_owned()));
         assert!(rendered.contains(&"para line two".to_owned()));
@@ -196,19 +242,12 @@ mod tests {
     fn rendered_docs_stay_narrow_enough_for_a_terminal() {
         use ratatui::text::Line;
         for doc in [Doc::Help, Doc::Readme] {
-            let text = tui_markdown::from_str(doc.markdown());
-            let widest = text.lines.iter().max_by_key(|line| line.width());
+            let widest = doc.rendered().lines.iter().max_by_key(|line| line.width());
             let width = widest.map_or(0, Line::width);
             assert!(
                 width <= 100,
                 "{doc:?} renders a {width}-column line; re-wrap the source:\n{}",
-                widest
-                    .map(|line| line
-                        .spans
-                        .iter()
-                        .map(|span| span.content.as_ref())
-                        .collect::<String>())
-                    .unwrap_or_default()
+                widest.map(flatten).unwrap_or_default()
             );
         }
     }

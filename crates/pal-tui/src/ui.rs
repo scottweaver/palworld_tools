@@ -89,7 +89,7 @@ fn draw_doc(frame: &mut Frame, view: &DocView, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(tui_markdown::from_str(view.doc.markdown())).scroll((view.scroll, 0)),
+        Paragraph::new(view.doc.rendered().clone()).scroll((view.scroll, 0)),
         inner,
     );
 }
