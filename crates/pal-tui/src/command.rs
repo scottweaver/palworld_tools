@@ -12,6 +12,7 @@ pub enum Command {
     OpenLibrary,
     DeletePlan,
     ClearGoal,
+    ReloadPool,
     Quit,
 }
 
@@ -37,6 +38,7 @@ impl Command {
             "o" => Ok(Self::OpenLibrary),
             "dd" => Ok(Self::DeletePlan),
             "clear" => Ok(Self::ClearGoal),
+            "reload" => Ok(Self::ReloadPool),
             "q" | "quit" => Ok(Self::Quit),
             other => Err(UnknownCommand(other.to_owned())),
         }
@@ -157,6 +159,7 @@ mod tests {
         assert_eq!(Command::parse("o"), Ok(Command::OpenLibrary));
         assert_eq!(Command::parse("dd"), Ok(Command::DeletePlan));
         assert_eq!(Command::parse("clear"), Ok(Command::ClearGoal));
+        assert_eq!(Command::parse("reload"), Ok(Command::ReloadPool));
         assert_eq!(Command::parse("q"), Ok(Command::Quit));
         assert_eq!(Command::parse("quit"), Ok(Command::Quit));
         let unknown = Command::parse("frobnicate").unwrap_err();

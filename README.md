@@ -110,8 +110,9 @@ prompt, `:help` shows the key and feature reference in-app, and
 `:readme` renders this README in a scrollable viewer (`Esc`/`q`
 closes it, `:q` quits). The prompt also carries working verbs:
 `:w` saves the highlighted plan, `:o` opens the saved-plan library,
-`:dd` deletes the selected saved plan, and `:clear` resets the
-target, progenitor marks, and passives.
+`:dd` deletes the selected saved plan, `:clear` resets the target,
+progenitor marks, and passives, and `:reload` re-imports the pool
+from disk (= `F6`).
 
 ### Keys and mouse
 

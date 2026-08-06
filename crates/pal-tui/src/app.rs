@@ -356,6 +356,7 @@ impl<'db> App<'db> {
             Ok(Command::OpenLibrary) => self.open_library(),
             Ok(Command::DeletePlan) => self.delete_selected_plan(),
             Ok(Command::ClearGoal) => self.clear_goal(),
+            Ok(Command::ReloadPool) => self.reload_pool(),
             Ok(Command::Quit) => self.should_quit = true,
             Err(unknown) => self.status = format!("unknown command: {unknown} — try :help"),
         }
@@ -1264,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn f6_reloads_the_pool_from_disk_without_restarting() {
+    fn f6_and_the_reload_verb_reload_the_pool_from_disk() {
         let f = fixture();
         let path = std::env::temp_dir().join(format!("pal-tui-reload-{}.toml", std::process::id()));
         std::fs::write(
@@ -1274,8 +1275,13 @@ mod tests {
         .unwrap();
         let mut app = App::new(f.solver, Vec::new(), test_store());
 
-        // Without a file-backed pool, F6 explains itself.
+        // Without a file-backed pool, F6 explains itself — and the
+        // :reload verb lands on the same logic.
         app.handle_key(key(KeyCode::F(6)));
+        assert!(app.status.contains("nothing to reload"));
+        app.status.clear();
+        type_line(&mut app, ":reload");
+        app.handle_key(key(KeyCode::Enter));
         assert!(app.status.contains("nothing to reload"));
 
         app.pool_path = Some(path.to_string_lossy().into_owned());
@@ -1283,7 +1289,8 @@ mod tests {
         assert_eq!(app.owned.len(), 1);
         assert!(app.status.contains("reloaded"));
 
-        // A grown file lands on the next reload, and plans refresh.
+        // A grown file lands on the next reload (driven through the
+        // prompt this time), and plans refresh.
         std::fs::write(
             &path,
             "[[pals]]\nspecies = \"Lamball\"\ngender = \"male\"\n\
@@ -1291,7 +1298,8 @@ mod tests {
         )
         .unwrap();
         app.target = Some(PalName::new("DreamDemon"));
-        app.handle_key(key(KeyCode::F(6)));
+        type_line(&mut app, ":reload");
+        app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.owned.len(), 2);
         assert!(!app.plans.is_empty());
 
