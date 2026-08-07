@@ -62,8 +62,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::new().add_modifier(Modifier::DIM)),
         areas.help,
     );
-    if let Overlay::Doc(view) = &app.overlay {
-        draw_doc(frame, view, frame.area());
+    match &app.overlay {
+        Overlay::Doc(view) => draw_doc(frame, view, frame.area()),
+        Overlay::Confirm(label) => draw_confirm(frame, label, frame.area()),
+        Overlay::None | Overlay::Prompt(_) => {}
     }
 }
 
@@ -76,8 +78,37 @@ fn status_line<'app>(app: &'app App) -> Paragraph<'app> {
             Span::raw(format!(":{buffer}")),
             Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED)),
         ])),
-        Overlay::None | Overlay::Doc(_) => Paragraph::new(app.status.as_str()),
+        Overlay::None | Overlay::Doc(_) | Overlay::Confirm(_) => {
+            Paragraph::new(app.status.as_str())
+        }
     }
+}
+
+/// Centered y/n modal naming the plan a keyed delete is about to
+/// remove. Sized to its widest text and clamped to the terminal.
+fn draw_confirm(frame: &mut Frame, label: &str, area: Rect) {
+    const TITLE: &str = " Delete saved plan? ";
+    const HINT: &str = " y/Enter delete · n/Esc keep ";
+    let content_width = [label, TITLE, HINT]
+        .into_iter()
+        .map(|text| Span::raw(text).width())
+        .max()
+        .unwrap_or(0);
+    let width = u16::try_from(content_width + 4)
+        .unwrap_or(u16::MAX)
+        .min(area.width);
+    let height = 3.min(area.height);
+    let modal = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, modal);
+    let block = pane_block(TITLE, true).title_bottom(HINT);
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+    frame.render_widget(Paragraph::new(label).centered(), inner);
 }
 
 /// Full-screen viewer for `:help` / `:readme`: the embedded markdown
@@ -673,6 +704,17 @@ mod tests {
         assert!(
             !rendered.contains("Passives ("),
             "the viewer covers the panes"
+        );
+
+        app.overlay = Overlay::Confirm("Loomen — Diamond Body".to_owned());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(rendered.contains("Delete saved plan?"));
+        assert!(rendered.contains("Loomen — Diamond Body"));
+        assert!(rendered.contains("y/Enter delete"));
+        assert!(
+            rendered.contains("Passives ("),
+            "the modal floats over the panes without hiding them"
         );
     }
 

@@ -9,7 +9,7 @@
 | `↑` / `↓` | Move the cursor |
 | `Enter` or click | Pals: set target · Passives: toggle · Plans: re-search |
 | `F4` or `⇧`+click | Toggle a progenitor mark (Pals pane) |
-| `Ctrl+D` / `Delete` | Clear progenitor marks (library: delete entry; `x` too) |
+| `Ctrl+D` / `Delete` | Clear progenitor marks (library: delete entry after y/n; `x` too) |
 | `←` / `→` | Search depth (1–24, shown in the Plans title) |
 | `h` / `a` / `d` | Plans pane: raise an IV minimum by 10 (uppercase lowers) |
 | `F2` | Toggle wild-capture mode |
@@ -28,7 +28,7 @@
 | `:readme` | The full README, rendered in-app |
 | `:w` | Save the highlighted plan to the library (= `Ctrl+S`) |
 | `:o` | Open the saved-plan library (= `Ctrl+L`; never closes it) |
-| `:dd` | Delete the selected saved plan (library; plain `x` works there too) |
+| `:dd` | Delete the selected saved plan immediately — typed, so it skips the y/n gate |
 | `:clear` | Clear the target, progenitor marks, and passives |
 | `:q` / `:quit` | Quit |
 
