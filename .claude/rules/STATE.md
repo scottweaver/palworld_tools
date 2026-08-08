@@ -5,12 +5,12 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-08
+Last updated: 2026-08-08 (post TUI batch #37–#39)
 
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#40, 2026-08-02
+battle-tested against the user's real save (PRs #1–#42, 2026-08-02
 … 08-08). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
@@ -23,9 +23,10 @@ planner — auto re-search on any change with searches on a background
 worker (spinner in the Plans title, latest-wins supersession), mouse
 + ⇧click progenitors, tier-colored passives, pinned selections,
 family-tree plans, wild opt-in via F2, saved-plan library incl.
-Ctrl+S/Ctrl+L and x-delete, F6 pool reload, h/a/d IV floors, `:`
-command prompt — :help/:readme embedded docs plus :w/:o/:dd/:clear
-working verbs). **GUI stack (egui vs Tauri) deliberately
+Ctrl+S/Ctrl+L and x-delete behind a y/n confirm modal, F6 pool
+reload, h/a/d IV floors, `:` command prompt — :help/:readme embedded
+docs rendered without markdown source markers, plus
+:w/:o/:dd/:clear/:reload working verbs). **GUI stack (egui vs Tauri) deliberately
 deferred** until pal-gui starts. 107 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
@@ -36,10 +37,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `de73c71`, CI green, 107 tests |
-| `feat/tui-rendered-docs` | doc viewer drops markdown markers | PR #37 open, awaiting review |
-| `feat/tui-reload-verb` | `:reload` prompt verb (= F6) | PR #38 open, awaiting review |
-| `feat/tui-delete-confirm` | y/n modal before keyed plan deletes | PR #39 open, awaiting review |
+| `main` | trunk | at `2c62854`, CI green, 107 tests |
 
 ## Next up
 
@@ -57,6 +55,18 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-08 — TUI batch: rendered docs, :reload, delete confirm
+  (PRs #37 + #38 + #39, merged together).** The doc viewer renders
+  :help/:readme through a custom tui-markdown StyleSheet (no `#`
+  markers or fence lines; rendered Text cached per doc — no more
+  per-frame re-parse); `:reload` re-imports the pool via the same
+  path as F6; keyed deletes (x/Ctrl+D/Delete/Backspace) gate behind
+  a centered y/n modal naming the plan, with :dd staying immediate
+  by design (settled in a design dialog). Overlay gained a Confirm
+  variant — the no-wildcard-match rule surfaced every site needing
+  a decision. Risk: the three PRs merged as disjoint hunks over
+  shared files; the combination was verified post-merge (fmt,
+  clippy, 107 tests) rather than per-PR.
 - **2026-08-08 — Solver perf pass: 4-passive searches 100s → 1.5s
   (PR #40, merged).** User report: Beakon + Legend/Diamond
   Body/Swift/Eternal Engine took a minute+ for a 3-step plan.
@@ -146,15 +156,7 @@ the remaining stub.
   and `real_save.rs` now asserts nonzero carriers. Lesson: "0
   unknown passives" was consistent with "0 passives extracted" —
   validation now checks presence, not just absence of errors.
-- **2026-08-03 — Depth cap 8 → 24 + incumbent cut.** With wild off
-  by default, closed-pool routing can legitimately exceed the old
-  7+1 bound. Solver gains a branch-and-bound cut (candidates whose
-  root cost + remaining-distance eggs can't beat the worst incumbent
-  plan are dropped once max_results plans exist). Measured on the
-  real save at depth 24: 0.13s wild-off / 0.28s wild-on. Risk: the
-  pathological combo (deep + wild + 3 progenitor marks) still runs
-  ~15s on the UI thread — the state-space churn needs a
-  priority-queue search, queued with the worker-thread item.
+
 ## Maintenance
 
 - **Refresh trigger:** any merge or milestone that changes what an
