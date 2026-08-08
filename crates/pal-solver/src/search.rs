@@ -32,8 +32,15 @@
 //! produced their children), enumerates pairs species-group-first so
 //! unreachable combinations are rejected wholesale, and fans the
 //! group work out with rayon.
+//!
+//! Two disciplines keep multi-passive searches from churning: the
+//! frontier holds only candidates that opened a new (species, masks)
+//! state or strictly improved their state's best cost — mid-beam
+//! refinements are ranked but never re-expanded — and pair attempts
+//! stay heap-free ([`Candidate`]) until they survive a group-local
+//! per-state beam and the branch-and-bound cut.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use pal_core::model::{Gender, IvSpread, Pal, PalDb, PalName, PassiveName};
@@ -215,6 +222,7 @@ impl<'db> Solver<'db> {
             return Ok(Vec::new());
         }
         let distance_to_goal = self.distances_to(&goal.species);
+        let owned_junk = owned_junk_table(owned, &goal.passives);
 
         let mut arena: Vec<Record> = Vec::new();
         seed_leaves(
@@ -258,9 +266,14 @@ impl<'db> Solver<'db> {
                     index: self.index,
                     odds: self.odds,
                     iv_odds: self.iv_odds,
-                    goal,
                     distance_to_goal: &distance_to_goal,
                     config,
+                    owned_junk: &owned_junk,
+                    goal_species: &goal.species,
+                    full,
+                    all_progenitors,
+                    iv_full,
+                    incumbent_worst,
                 },
                 &arena,
                 &leaves,
@@ -269,32 +282,12 @@ impl<'db> Solver<'db> {
             );
             frontier.clear();
             for child in children {
-                if let Some(worst) = incumbent_worst {
-                    // A non-goal candidate still needs at least
-                    // `distance` further breeding steps, each of
-                    // which costs at least one expected egg.
-                    let remaining_steps = if child.species == goal.species {
-                        u32::from(
-                            child.carried != full
-                                || child.required != all_progenitors
-                                || child.iv_met != iv_full,
-                        )
-                    } else {
-                        distance_to_goal
-                            .get(&child.species)
-                            .copied()
-                            .unwrap_or(1)
-                            .max(1)
-                    };
-                    if child.root_cost() + f64::from(remaining_steps) >= worst {
-                        continue;
-                    }
-                }
                 if let Some(id) = insert_pruned(&mut arena, &mut buckets, child, config.max_results)
                 {
                     frontier.push(id);
                 }
             }
+            keep_last_per_state(&arena, &mut frontier);
             if frontier.is_empty() {
                 break;
             }
@@ -302,6 +295,7 @@ impl<'db> Solver<'db> {
         Ok(ranked_plans(
             &arena,
             owned,
+            &goal.passives,
             leaves.iter().chain(buckets.values().flatten()),
             &goal_state,
             config.max_results,
@@ -314,6 +308,7 @@ impl<'db> Solver<'db> {
 fn ranked_plans<'a>(
     arena: &[Record],
     owned: &[OwnedPal],
+    desired: &[PassiveName],
     candidates: impl Iterator<Item = &'a RecordId>,
     goal_state: &BredState,
     max_results: usize,
@@ -330,7 +325,7 @@ fn ranked_plans<'a>(
         .map(|id| {
             let record = &arena[id.0];
             BreedingPlan {
-                root: materialize(arena, owned, *id),
+                root: materialize(arena, owned, desired, *id),
                 expected_eggs: record.root_cost(),
                 steps: record.bred_count,
             }
@@ -491,6 +486,29 @@ enum Source {
 /// (species, carried, required, iv-met) bucket.
 type BredState = (PalName, DesiredMask, DesiredMask, DesiredMask);
 
+/// One expansion per state and round: admissions only happen on a
+/// strict per-state best improvement, so the last admission for a
+/// state is its best — keep that one and drop its earlier, already
+/// superseded frontier entries.
+fn keep_last_per_state(arena: &[Record], frontier: &mut Vec<RecordId>) {
+    let mut seen: HashSet<BredState> = HashSet::new();
+    let mut kept = Vec::with_capacity(frontier.len());
+    for &id in frontier.iter().rev() {
+        let record = &arena[id.0];
+        let key = (
+            record.species.clone(),
+            record.carried,
+            record.required,
+            record.iv_met,
+        );
+        if seen.insert(key) {
+            kept.push(id);
+        }
+    }
+    kept.reverse();
+    *frontier = kept;
+}
+
 #[derive(Clone, Debug)]
 struct Record {
     source: Source,
@@ -501,11 +519,13 @@ struct Record {
     /// Active goal IV minimums this candidate meets. For bred pals
     /// this is every stat either parent met: a successful hatch
     /// inherited each such stat from a parent at/above the minimum.
+    ///
+    /// A candidate's contribution to a child's inheritance pool is
+    /// not stored: bred pals contribute exactly their carried
+    /// (desired-only) set, wilds and progenitors nothing, and owned
+    /// leaves add the junk names precomputed per leaf in
+    /// [`ExpandContext::owned_junk`].
     iv_met: DesiredMask,
-    /// Distinct passives this candidate contributes to a child's
-    /// inheritance pool: everything an owned pal has, exactly the
-    /// carried set for a bred pal, nothing for wilds and progenitors.
-    contribution: Vec<PassiveName>,
     /// Expected eggs spent producing the parents (0 for leaves).
     parents_cost: f64,
     /// P(one egg carries this node's passives); 1 for leaves.
@@ -549,7 +569,6 @@ fn leaf_record(source: Source, species: PalName, gender: GenderAvailability) -> 
         carried: DesiredMask::empty(),
         required: DesiredMask::empty(),
         iv_met: DesiredMask::empty(),
-        contribution: Vec::new(),
         parents_cost: 0.0,
         egg_p: 1.0,
         bred_count: 0,
@@ -581,7 +600,6 @@ fn seed_leaves(
     arena.extend(owned.iter().enumerate().map(|(position, pal)| Record {
         carried: DesiredMask::of(&goal.passives, &pal.passives),
         iv_met: iv_mask(goal.iv_thresholds, pal.ivs),
-        contribution: distinct(&pal.passives),
         ..leaf_record(
             Source::Owned(position),
             pal.species.clone(),
@@ -627,9 +645,21 @@ struct ExpandContext<'a> {
     index: &'a ChildIndex,
     odds: &'a PassiveOdds,
     iv_odds: &'a IvOdds,
-    goal: &'a BreedingGoal,
     distance_to_goal: &'a HashMap<PalName, u32>,
     config: &'a SearchConfig,
+    /// Per owned leaf (same indexing as the `owned` slice): its
+    /// distinct passives that are not goal passives. The only
+    /// pool-size contribution the carried masks cannot express.
+    owned_junk: &'a [Vec<PassiveName>],
+    /// The goal state the branch-and-bound cut measures against.
+    goal_species: &'a PalName,
+    full: DesiredMask,
+    all_progenitors: DesiredMask,
+    iv_full: DesiredMask,
+    /// Worst incumbent goal cost this round, once `max_results` goal
+    /// plans exist; candidates that cannot beat it are dropped inside
+    /// the group expansion.
+    incumbent_worst: Option<f64>,
 }
 
 /// Members of one species during a round, split into the ids added
@@ -704,7 +734,10 @@ fn species_groups<'a>(
 }
 
 /// All member pairs of one ordered species pair where at least one
-/// side is fresh, in deterministic order.
+/// side is fresh, in deterministic order. Candidates flow through
+/// the incumbent cut and a group-local per-state beam before any
+/// heap-carrying [`Record`] exists, so a round's millions of
+/// attempts allocate only for the handful of survivors.
 fn expand_group_pair(
     context: ExpandContext<'_>,
     arena: &[Record],
@@ -730,11 +763,31 @@ fn expand_group_pair(
         return Vec::new();
     };
 
-    let mut children = Vec::new();
+    let goal_child = child == context.goal_species;
+    let mut local = LocalBeam::new(context.config.max_results);
     let mut try_pair = |male_id: RecordId, female_id: RecordId| {
-        if let Some(record) = breed(context, arena, child, child_pal, male_id, female_id) {
-            children.push(record);
+        let Some(candidate) = breed(context, arena, distance, male_id, female_id) else {
+            return;
+        };
+        if let Some(worst) = context.incumbent_worst {
+            // A non-goal candidate still needs at least `distance`
+            // further breeding steps, each of which costs at least
+            // one expected egg; a goal-species candidate short of a
+            // mask needs at least one more.
+            let remaining_steps = if goal_child {
+                u32::from(
+                    candidate.carried != context.full
+                        || candidate.required != context.all_progenitors
+                        || candidate.iv_met != context.iv_full,
+                )
+            } else {
+                distance.max(1)
+            };
+            if candidate.root_cost() + f64::from(remaining_steps) >= worst {
+                return;
+            }
         }
+        local.offer(candidate);
     };
     for &male in &males.fresh {
         for &female in females.fresh.iter().chain(&females.old) {
@@ -746,20 +799,108 @@ fn expand_group_pair(
             try_pair(male, female);
         }
     }
-    children
+    local.emit(child, child_pal)
+}
+
+/// Per-state beam applied inside one species-group expansion, before
+/// records are materialized: keeps the best `beam` candidates per
+/// (carried, required, iv-met) state by root cost. The global beam
+/// applies the same rule across groups, so nothing this drops could
+/// have survived globally.
+struct LocalBeam {
+    beam: usize,
+    states: HashMap<(DesiredMask, DesiredMask, DesiredMask), Vec<Candidate>>,
+}
+
+impl LocalBeam {
+    fn new(beam: usize) -> Self {
+        Self {
+            beam,
+            states: HashMap::new(),
+        }
+    }
+
+    fn offer(&mut self, candidate: Candidate) {
+        let bucket = self
+            .states
+            .entry((candidate.carried, candidate.required, candidate.iv_met))
+            .or_default();
+        if bucket.len() < self.beam {
+            bucket.push(candidate);
+            return;
+        }
+        let Some(worst_slot) = (0..bucket.len())
+            .max_by(|&a, &b| bucket[a].root_cost().total_cmp(&bucket[b].root_cost()))
+        else {
+            return;
+        };
+        if candidate.root_cost() < bucket[worst_slot].root_cost() {
+            bucket[worst_slot] = candidate;
+        }
+    }
+
+    /// Materializes the survivors, in deterministic state order.
+    fn emit(self, child: &PalName, child_pal: &Pal) -> Vec<Record> {
+        let mut states: Vec<_> = self.states.into_iter().collect();
+        states.sort_by_key(|((carried, required, iv_met), _)| (carried.0, required.0, iv_met.0));
+        states
+            .into_iter()
+            .flat_map(|(_, bucket)| bucket)
+            .map(|candidate| Record {
+                source: Source::Bred {
+                    male: candidate.male,
+                    female: candidate.female,
+                },
+                species: child.clone(),
+                gender: GenderAvailability::Flexible {
+                    male: child_pal.gender_probability.of(Gender::Male),
+                    female: child_pal.gender_probability.of(Gender::Female),
+                },
+                carried: candidate.carried,
+                required: candidate.required,
+                iv_met: candidate.iv_met,
+                parents_cost: candidate.parents_cost,
+                egg_p: candidate.egg_p,
+                bred_count: candidate.bred_count,
+            })
+            .collect()
+    }
+}
+
+/// A bred child before it is admitted anywhere: everything a
+/// [`Record`] holds except the species name and gender availability,
+/// which are group-wide facts attached only to the candidates that
+/// survive the group's local beam. Heap-free on purpose — rounds
+/// attempt tens of millions of these.
+#[derive(Clone, Copy, Debug)]
+struct Candidate {
+    male: RecordId,
+    female: RecordId,
+    carried: DesiredMask,
+    required: DesiredMask,
+    iv_met: DesiredMask,
+    parents_cost: f64,
+    egg_p: f64,
+    bred_count: usize,
+}
+
+impl Candidate {
+    /// Mirrors [`Record::root_cost`] for pre-admission pruning.
+    fn root_cost(&self) -> f64 {
+        self.parents_cost + 1.0 / self.egg_p
+    }
 }
 
 /// Attempts one breeding arrangement; `None` when it is impossible or
-/// over the step budget. Species-level checks (child, reachability)
-/// already happened at the group level.
+/// over the step budget. Species-level checks (child, reachability,
+/// `distance`) already happened at the group level.
 fn breed(
     context: ExpandContext<'_>,
     arena: &[Record],
-    child: &PalName,
-    child_pal: &Pal,
+    distance: u32,
     male_id: RecordId,
     female_id: RecordId,
-) -> Option<Record> {
+) -> Option<Candidate> {
     let male = &arena[male_id.0];
     let female = &arena[female_id.0];
 
@@ -774,7 +915,6 @@ fn breed(
         return None;
     }
     let remaining = context.config.max_breeding_steps - bred_count;
-    let distance = *context.distance_to_goal.get(child)?;
     if usize::try_from(distance).map_or(true, |steps| steps > remaining) {
         return None;
     }
@@ -783,12 +923,12 @@ fn breed(
     let female_cost = female.cost_as(Gender::Female)?;
 
     let carried = male.carried.union(female.carried);
-    let pool = merged_pool(&male.contribution, &female.contribution);
+    let pool_size = carried.count() + junk_union(context.owned_junk, male, female);
     let passives_p: f64 = (carried.count()..=MAX_TOTAL_PASSIVES)
         .map(|num_final| {
             context
                 .odds
-                .exact_total_probability(pool.len(), carried.count(), num_final)
+                .exact_total_probability(pool_size, carried.count(), num_final)
         })
         .sum();
 
@@ -807,20 +947,12 @@ fn breed(
         return None;
     }
 
-    Some(Record {
-        source: Source::Bred {
-            male: male_id,
-            female: female_id,
-        },
-        species: child.clone(),
-        gender: GenderAvailability::Flexible {
-            male: child_pal.gender_probability.of(Gender::Male),
-            female: child_pal.gender_probability.of(Gender::Female),
-        },
+    Some(Candidate {
+        male: male_id,
+        female: female_id,
         carried,
         required: male.required.union(female.required),
         iv_met,
-        contribution: carried.names(&context.goal.passives),
         parents_cost: male_cost + female_cost,
         egg_p,
         bred_count,
@@ -828,8 +960,13 @@ fn breed(
 }
 
 /// Beam-prunes into a bucket: keeps at most `beam` bred candidates
-/// per (species, carried, required) state, best root-cost first.
-/// Returns the arena id when the candidate was kept.
+/// per (species, carried, required, iv-met) state, best root-cost
+/// first. Returns the arena id only when the candidate opened a new
+/// state or became its state's new best — the frontier signal.
+/// Mid-bucket admissions are kept for ranking but never re-expand:
+/// their state already has an equal-or-better representative that
+/// did, and re-expanding every marginal refinement is what made
+/// multi-passive searches churn for minutes.
 fn insert_pruned(
     arena: &mut Vec<Record>,
     buckets: &mut HashMap<BredState, Vec<RecordId>>,
@@ -843,11 +980,16 @@ fn insert_pruned(
         record.iv_met,
     );
     let bucket = buckets.entry(key).or_default();
+    let best = bucket
+        .iter()
+        .map(|id| arena[id.0].root_cost())
+        .fold(f64::INFINITY, f64::min);
+    let improves_best = record.root_cost() < best;
     if bucket.len() < beam {
         let id = RecordId(arena.len());
         arena.push(record);
         bucket.push(id);
-        return Some(id);
+        return improves_best.then_some(id);
     }
     let worst_slot = (0..bucket.len()).max_by(|&a, &b| {
         arena[bucket[a].0]
@@ -858,43 +1000,59 @@ fn insert_pruned(
         let id = RecordId(arena.len());
         arena.push(record);
         bucket[worst_slot] = id;
-        Some(id)
+        improves_best.then_some(id)
     } else {
         None
     }
 }
 
-fn materialize(arena: &[Record], owned: &[OwnedPal], id: RecordId) -> PlanNode {
+fn materialize(
+    arena: &[Record],
+    owned: &[OwnedPal],
+    desired: &[PassiveName],
+    id: RecordId,
+) -> PlanNode {
     let record = &arena[id.0];
     match record.source {
         Source::Owned(position) => PlanNode::Owned(owned[position].clone()),
         Source::Wild => PlanNode::Wild(record.species.clone()),
         Source::Progenitor => PlanNode::Progenitor(record.species.clone()),
         Source::Bred { male, female } => PlanNode::Bred(Box::new(BredNode {
-            male: materialize(arena, owned, male),
-            female: materialize(arena, owned, female),
+            male: materialize(arena, owned, desired, male),
+            female: materialize(arena, owned, desired, female),
             species: record.species.clone(),
-            carried_passives: record.contribution.clone(),
+            carried_passives: record.carried.names(desired),
         })),
     }
 }
 
-fn merged_pool(first: &[PassiveName], second: &[PassiveName]) -> Vec<PassiveName> {
-    let mut pool = first.to_vec();
-    for passive in second {
-        if !pool.contains(passive) {
-            pool.push(passive.clone());
+/// Distinct non-goal passives the pair contributes to the child's
+/// inheritance pool. Only owned leaves contribute junk — bred pals
+/// contribute exactly their carried set, wilds and progenitors
+/// nothing — so the union is a lookup except for leaf × leaf pairs.
+fn junk_union(owned_junk: &[Vec<PassiveName>], male: &Record, female: &Record) -> usize {
+    match (male.source, female.source) {
+        (Source::Owned(left), Source::Owned(right)) => {
+            let (a, b) = (&owned_junk[left], &owned_junk[right]);
+            a.len() + b.iter().filter(|passive| !a.contains(passive)).count()
         }
+        (Source::Owned(position), _) | (_, Source::Owned(position)) => owned_junk[position].len(),
+        _ => 0,
     }
-    pool
 }
 
-fn distinct(passives: &[PassiveName]) -> Vec<PassiveName> {
-    let mut seen = Vec::new();
-    for passive in passives {
-        if !seen.contains(passive) {
-            seen.push(passive.clone());
-        }
-    }
-    seen
+/// The per-leaf junk table for [`ExpandContext::owned_junk`].
+fn owned_junk_table(owned: &[OwnedPal], desired: &[PassiveName]) -> Vec<Vec<PassiveName>> {
+    owned
+        .iter()
+        .map(|pal| {
+            let mut junk: Vec<PassiveName> = Vec::new();
+            for passive in &pal.passives {
+                if !desired.contains(passive) && !junk.contains(passive) {
+                    junk.push(passive.clone());
+                }
+            }
+            junk
+        })
+        .collect()
 }
