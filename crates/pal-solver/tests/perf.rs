@@ -138,11 +138,14 @@ fn four_passive_goal_timing() {
         progenitors: Vec::new(),
         iv_thresholds: IvThresholds::default(),
     };
-    let depths: Vec<usize> = std::env::var("PERF_DEPTHS").map_or_else(|_| vec![3, 6, 10, 16, 24], |spec| {
+    let depths: Vec<usize> = std::env::var("PERF_DEPTHS").map_or_else(
+        |_| vec![3, 6, 10, 16, 24],
+        |spec| {
             spec.split(',')
                 .map(|depth| depth.trim().parse().expect("PERF_DEPTHS: usize list"))
                 .collect()
-        });
+        },
+    );
     for depth in depths {
         let config = SearchConfig {
             max_breeding_steps: depth,
