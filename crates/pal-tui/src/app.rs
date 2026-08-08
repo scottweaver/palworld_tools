@@ -46,6 +46,9 @@ pub enum Overlay {
     Prompt(String),
     /// A full-screen document viewer (`:help`, `:readme`).
     Doc(DocView),
+    /// A y/n gate before deleting the highlighted saved plan; holds
+    /// the plan's label for the modal to name.
+    Confirm(String),
 }
 
 /// How searches run: `Inline` executes on the caller's thread and
@@ -305,6 +308,7 @@ impl<'db> App<'db> {
             Overlay::None => self.handle_pane_key(key),
             Overlay::Prompt(_) => self.handle_prompt_key(key),
             Overlay::Doc(_) => self.handle_doc_key(key),
+            Overlay::Confirm(_) => self.handle_confirm_key(key),
         }
     }
 
@@ -405,7 +409,7 @@ impl<'db> App<'db> {
     pub fn handle_scroll(&mut self, delta: i16) {
         match &mut self.overlay {
             Overlay::Doc(view) => view.scroll_lines(delta),
-            Overlay::None | Overlay::Prompt(_) => {}
+            Overlay::None | Overlay::Prompt(_) | Overlay::Confirm(_) => {}
         }
     }
 
@@ -444,7 +448,7 @@ impl<'db> App<'db> {
             KeyCode::Char('x')
                 if self.library_focused() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                self.delete_saved_plan();
+                self.request_delete_confirmation();
             }
             KeyCode::Char(c @ ('h' | 'H' | 'a' | 'A' | 'd' | 'D'))
                 if self.focus == Pane::Results
@@ -457,7 +461,7 @@ impl<'db> App<'db> {
                 // deletes the highlighted plan; elsewhere it edits
                 // the focused filter.
                 if self.viewing_saved && self.focus == Pane::Results {
-                    self.delete_saved_plan();
+                    self.request_delete_confirmation();
                 } else if let Some(filter) = self.active_filter() {
                     filter.pop();
                     self.reset_cursor();
@@ -480,7 +484,7 @@ impl<'db> App<'db> {
     /// library is open, otherwise all progenitor marks.
     fn contextual_delete(&mut self) {
         if self.viewing_saved {
-            self.delete_saved_plan();
+            self.request_delete_confirmation();
         } else {
             self.clear_progenitors();
         }
@@ -492,7 +496,7 @@ impl<'db> App<'db> {
     /// An open overlay owns the screen, so clicks stop at it.
     pub fn handle_click(&mut self, click: Click, shift: bool) {
         match self.overlay {
-            Overlay::Prompt(_) | Overlay::Doc(_) => return,
+            Overlay::Prompt(_) | Overlay::Doc(_) | Overlay::Confirm(_) => return,
             Overlay::None => {}
         }
         self.focus = click.pane;
@@ -632,6 +636,33 @@ impl<'db> App<'db> {
             );
         } else {
             "live plans".clone_into(&mut self.status);
+        }
+    }
+
+    /// Keyed deletes (`x`, `Ctrl+D`, `Delete`, `Backspace`) ask
+    /// first; the modal owns the keyboard until answered. `:dd`
+    /// stays immediate — a typed command is already deliberate.
+    fn request_delete_confirmation(&mut self) {
+        match self.saved.plans.get(self.saved_cursor) {
+            Some(plan) => self.overlay = Overlay::Confirm(plan.label.clone()),
+            None => "nothing to delete".clone_into(&mut self.status),
+        }
+    }
+
+    fn handle_confirm_key(&mut self, key: KeyEvent) {
+        let Overlay::Confirm(label) = &self.overlay else {
+            return;
+        };
+        match key.code {
+            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                self.overlay = Overlay::None;
+                self.delete_saved_plan();
+            }
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                self.status = format!("kept: {label}");
+                self.overlay = Overlay::None;
+            }
+            _ => {}
         }
     }
 
@@ -1350,11 +1381,12 @@ mod tests {
         assert!(app.saved.plans[0].label.contains("Daedream"));
         assert_eq!(app.saved.plans[0].goal_species, PalName::new("DreamDemon"));
 
-        // F9 shows the library; Del removes the highlighted entry.
+        // F9 shows the library; Del asks, then removes the entry.
         app.handle_key(key(KeyCode::F(9)));
         assert!(app.viewing_saved);
         assert_eq!(app.focus, Pane::Results);
         app.handle_key(key(KeyCode::Delete));
+        app.handle_key(key(KeyCode::Char('y')));
         assert!(app.saved.plans.is_empty());
         assert!(app.status.contains("deleted"));
 
@@ -1421,7 +1453,8 @@ mod tests {
         assert!(app.progenitors.is_empty());
         assert!(app.species_filter.is_empty());
 
-        // In the library, Ctrl+D and Backspace both delete.
+        // In the library, Ctrl+D and Backspace both delete (each
+        // through the y/n gate).
         for label in ["one", "two"] {
             app.saved
                 .add(crate::plan_store::SavedPlan {
@@ -1438,8 +1471,10 @@ mod tests {
         }
         app.handle_key(key(KeyCode::F(9)));
         app.handle_key(ctrl_d);
+        app.handle_key(key(KeyCode::Char('y')));
         assert_eq!(app.saved.plans.len(), 1);
         app.handle_key(key(KeyCode::Backspace));
+        app.handle_key(key(KeyCode::Char('y')));
         assert!(app.saved.plans.is_empty());
 
         // Outside the library Backspace still edits the filter.
@@ -1971,18 +2006,41 @@ mod tests {
     }
 
     #[test]
-    fn x_in_the_library_deletes_the_selected_plan() {
+    fn x_in_the_library_asks_before_deleting() {
         let mut app = app_with_saved_plans(&["one", "two"]);
         app.handle_key(key(KeyCode::F(9)));
 
+        // x opens the confirm modal naming the plan; nothing is
+        // deleted until it is answered, and stray keys are ignored.
         app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.overlay, Overlay::Confirm("one".to_owned()));
+        assert_eq!(app.saved.plans.len(), 2);
+        app.handle_key(key(KeyCode::Char('z')));
+        assert_eq!(app.overlay, Overlay::Confirm("one".to_owned()));
+
+        // y deletes.
+        app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(app.overlay, Overlay::None);
         assert_eq!(app.saved.plans.len(), 1);
         assert!(app.status.contains("deleted"));
 
+        // n keeps; so does Esc.
         app.handle_key(key(KeyCode::Char('x')));
-        assert!(app.saved.plans.is_empty());
+        app.handle_key(key(KeyCode::Char('n')));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(app.status.contains("kept"));
+        app.handle_key(key(KeyCode::Char('x')));
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.saved.plans.len(), 1);
+        assert!(!app.should_quit, "Esc answers the modal, not the app");
 
+        // Enter confirms too; an empty library explains itself
+        // without opening a modal.
         app.handle_key(key(KeyCode::Char('x')));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.saved.plans.is_empty());
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.overlay, Overlay::None);
         assert!(app.status.contains("nothing to delete"));
     }
 
@@ -2137,10 +2195,13 @@ mod tests {
         assert_eq!(app.saved.plans.len(), 2);
         assert!(app.status.contains(":o opens the library"));
 
+        // A typed :dd is already deliberate — it deletes without
+        // the y/n gate the keyed deletes go through.
         type_line(&mut app, ":o");
         app.handle_key(key(KeyCode::Enter));
         type_line(&mut app, ":dd");
         app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.overlay, Overlay::None);
         assert_eq!(app.saved.plans.len(), 1);
         assert!(app.status.contains("deleted"));
     }
