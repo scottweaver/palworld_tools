@@ -30,6 +30,7 @@
 | `:o` | Open the saved-plan library (= `Ctrl+L`; never closes it) |
 | `:dd` | Delete the selected saved plan (library; plain `x` works there too) |
 | `:clear` | Clear the target, progenitor marks, and passives |
+| `:reload` | Reload the pool from the save/toml on disk (= `F6`) |
 | `:q` / `:quit` | Quit |
 
 In this viewer: `↑`/`↓` and the mouse wheel scroll by line,
