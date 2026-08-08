@@ -5,17 +5,18 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-05
+Last updated: 2026-08-08
 
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#35, 2026-08-02
-… 08-05). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
+battle-tested against the user's real save (PRs #1–#40, 2026-08-02
+… 08-08). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
 species-group pruning + incumbent cut, rayon; depth ≤ 24;
-progenitor-anchor, wild-capture, and IV-minimum modes); **pal-save** (`Level.sav`
+progenitor-anchor, wild-capture, and IV-minimum modes; frontier
+discipline + heap-free pair attempts keep 4-passive searches ≤2s); **pal-save** (`Level.sav`
 import incl. PlM/Oodle containers and self-discovering GVAS hints;
 validated: 771 pals, all with IVs); **pal-tui** (reactive
 planner — auto re-search on any change with searches on a background
@@ -35,19 +36,22 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `5eda6bb`, CI green, 107 tests |
+| `main` | trunk | at `de73c71`, CI green, 107 tests |
+| `feat/tui-rendered-docs` | doc viewer drops markdown markers | PR #37 open, awaiting review |
+| `feat/tui-reload-verb` | `:reload` prompt verb (= F6) | PR #38 open, awaiting review |
+| `feat/tui-delete-confirm` | y/n modal before keyed plan deletes | PR #39 open, awaiting review |
 
 ## Next up
 
 1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
    pal-save shipped in PR #17).
-2. Remaining solver refinements toward palcalc parity (time-based
-   effort, capture-effort costing for wild pals) plus solver-level
-   search cancellation — the TUI worker discards superseded results,
-   but an in-flight deep search still runs to completion (~15s worst
-   case); a cancel check in the search loop plus the priority-queue
-   rework would end it early. TUI follow-up: in-app pool editing.
+2. User validation of PR #40's speedup against the real save
+   (Beakon + 4 passives was the report). Then remaining solver
+   refinements toward palcalc parity (time-based effort,
+   capture-effort costing for wild pals); solver-level cancellation
+   is now low-urgency — worst observed search is ~1.7s. TUI
+   follow-up: in-app pool editing.
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -55,6 +59,21 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-08 — Solver perf pass: 4-passive searches 100s → 1.5s
+  (PR #40, merged).** User report: Beakon + Legend/Diamond
+  Body/Swift/Eternal Engine took a minute+ for a 3-step plan.
+  Root cause: every mid-beam cost refinement re-expanded against
+  the whole arena (52k admissions, 1.5k new states in one round),
+  and ~46M pair attempts per round each allocated a full Record.
+  Fix: frontier admission only on new-state or per-state best
+  improvement, heap-free Candidate pair attempts pruned by a
+  group-local beam + in-group incumbent cut, and mask-derived pool
+  sizes. Identical plans everywhere (main-worktree baseline);
+  wild+3-progenitor pathological case 15.4s → 1.03s at depth 32.
+  perf.rs keeps the scenario (PERF_DEPTHS knob) as the regression
+  harness. Risk: expansion is stricter than the beam — a mid-beam
+  record with better gendered cost no longer spawns children; no
+  observed plan drift. Awaiting user validation on the real save.
 - **2026-08-05 — Search worker + spinner, command verbs (PRs #34 +
   #35, merged).** Searches moved off the UI thread: App snapshots
   each question into a generation-tagged request, a worker thread
@@ -136,14 +155,6 @@ the remaining stub.
   pathological combo (deep + wild + 3 progenitor marks) still runs
   ~15s on the UI thread — the state-space churn needs a
   priority-queue search, queued with the worker-thread item.
-- **2026-08-03 — Mouse support in the TUI.** Left-click focuses a
-  pane and acts on the row under the pointer (target in Pals, toggle
-  in Passives, plan selection in Results); ⇧click marks a progenitor.
-  Hit-testing shares the draw geometry (`pane_areas`) and replicates
-  ratatui's keep-selection-visible scroll offset. Risk: some
-  terminals reserve ⇧click for native text selection — F4 remains
-  the fallback.
-
 ## Maintenance
 
 - **Refresh trigger:** any merge or milestone that changes what an
