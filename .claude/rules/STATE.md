@@ -46,12 +46,10 @@ the remaining stub.
 1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
    pal-save shipped in PR #17).
-2. User validation of PR #40's speedup against the real save
-   (Beakon + 4 passives was the report). Then remaining solver
-   refinements toward palcalc parity (time-based effort,
-   capture-effort costing for wild pals); solver-level cancellation
-   is now low-urgency — worst observed search is ~1.7s. TUI
-   follow-up: in-app pool editing.
+2. Remaining solver refinements toward palcalc parity (time-based
+   effort, capture-effort costing for wild pals); solver-level
+   cancellation is now low-urgency — worst observed search is
+   ~1.7s. TUI follow-up: in-app pool editing.
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -73,7 +71,9 @@ the remaining stub.
   perf.rs keeps the scenario (PERF_DEPTHS knob) as the regression
   harness. Risk: expansion is stricter than the beam — a mid-beam
   record with better gendered cost no longer spawns children; no
-  observed plan drift. Awaiting user validation on the real save.
+  observed plan drift. Validated on the real save 2026-08-08: a
+  4-passive Anubis goal (the densest breeding hub) returned
+  "basically instantaneous" per the user.
 - **2026-08-05 — Search worker + spinner, command verbs (PRs #34 +
   #35, merged).** Searches moved off the UI thread: App snapshots
   each question into a generation-tagged request, a worker thread
