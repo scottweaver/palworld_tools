@@ -10,7 +10,7 @@ use pal_solver::iv::IvThresholds;
 use pal_solver::search::{BreedingGoal, BreedingPlan, OwnedPal, SearchConfig, Solver};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -549,6 +549,7 @@ impl PalMcpServer {
 impl ServerHandler for PalMcpServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
+        info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.instructions = Some(INSTRUCTIONS.to_owned());
         info
@@ -985,5 +986,13 @@ mod tests {
                 "reload_pool",
             ]
         );
+    }
+
+    #[test]
+    fn the_server_identifies_as_pal_mcp() {
+        let info = server_with_toml("").get_info();
+        assert_eq!(info.server_info.name, "pal-mcp");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.instructions.is_some());
     }
 }
