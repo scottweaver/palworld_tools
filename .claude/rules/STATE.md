@@ -5,7 +5,7 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-08 (post TUI batch #37–#39)
+Last updated: 2026-08-09 (pal-mcp + pal-pool, PR #44 open)
 
 ## Active workstream
 
@@ -18,7 +18,10 @@ species-group pruning + incumbent cut, rayon; depth ≤ 24;
 progenitor-anchor, wild-capture, and IV-minimum modes; frontier
 discipline + heap-free pair attempts keep 4-passive searches ≤2s); **pal-save** (`Level.sav`
 import incl. PlM/Oodle containers and self-discovering GVAS hints;
-validated: 771 pals, all with IVs); **pal-tui** (reactive
+validated: 771 pals, all with IVs); **pal-pool** (shared
+save-or-TOML pool loading, graduated from pal-tui); **pal-mcp**
+(local stdio MCP server for Claude Desktop/Cowork/Claude Code —
+six tools over the same libraries, PR #44); **pal-tui** (reactive
 planner — auto re-search on any change with searches on a background
 worker (spinner in the Plans title, latest-wins supersession), mouse
 + ⇧click progenitors, tier-colored passives, pinned selections,
@@ -27,7 +30,7 @@ Ctrl+S/Ctrl+L and x-delete behind a y/n confirm modal, F6 pool
 reload, h/a/d IV floors, `:` command prompt — :help/:readme embedded
 docs rendered without markdown source markers, plus
 :w/:o/:dd/:clear/:reload working verbs). **GUI stack (egui vs Tauri) deliberately
-deferred** until pal-gui starts. 107 tests, CI runs `--all-features`. Scope
+deferred** until pal-gui starts. 120 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -37,13 +40,14 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `2c62854`, CI green, 107 tests |
+| `main` | trunk | at `61eb665`, CI green |
+| `feat/pal-mcp` | MCP server + pal-pool extraction | PR #44 open, 120 tests |
 
 ## Next up
 
 1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
-   pal-save shipped in PR #17).
+   pal-save shipped in PR #17, pool loading now shared via pal-pool).
 2. Remaining solver refinements toward palcalc parity (time-based
    effort, capture-effort costing for wild pals); solver-level
    cancellation is now low-urgency — worst observed search is
@@ -55,6 +59,18 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-09 — MCP server: the calculator in Claude chat (PR #44,
+  open).** New `pal-mcp` frontend: local stdio MCP server on the
+  official `rmcp` SDK (vetted; tokio confined to the binary shell)
+  with six tools — find_breeding_path, list_pals, reload_pool,
+  pal_info, breeding_combos, list_passives. Pool loading graduated
+  from pal-tui into the new shared `pal-pool` crate (typed errors
+  replacing anyhow at the library boundary) so the MCP and TUI views
+  of a save can never drift; ChildIndex gained a `pairings()`
+  accessor for inverse combo queries. ARCHITECTURE.md updated in-PR
+  (structural). Risk: handlers are tested directly (10 tests), not
+  through a stdio handshake — the first real client session proves
+  the wire.
 - **2026-08-08 — TUI batch: rendered docs, :reload, delete confirm
   (PRs #37 + #38 + #39, merged together).** The doc viewer renders
   :help/:readme through a custom tui-markdown StyleSheet (no `#`
@@ -147,15 +163,6 @@ the remaining stub.
   change re-plans automatically; stale Plans impossible), plus the
   three items below. Permanent real-save diagnostics landed in
   crates/pal-tui/tests/repro.rs.
-- **2026-08-03 — Import bug: every pal's passives silently dropped.**
-  `PassiveSkillList` parses into gvas's `ArrayProperty::Names`,
-  which the extractor didn't handle — all 704 pals imported
-  passive-less (also why passive-constrained searches returned
-  nothing). Found via a user report (Loomen + Diamond Body + Demon
-  God → no plans); fixed, revalidated (731 pals, 716 with passives),
-  and `real_save.rs` now asserts nonzero carriers. Lesson: "0
-  unknown passives" was consistent with "0 passives extracted" —
-  validation now checks presence, not just absence of errors.
 
 ## Maintenance
 
