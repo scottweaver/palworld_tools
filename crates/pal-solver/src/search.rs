@@ -191,6 +191,12 @@ impl<'db> Solver<'db> {
         self.pal_db
     }
 
+    /// The child-species index this solver searches over.
+    #[must_use]
+    pub fn child_index(&self) -> &'db ChildIndex {
+        self.index
+    }
+
     fn distances_to(&self, goal: &PalName) -> Arc<HashMap<PalName, u32>> {
         let mut cache = self
             .distance_cache

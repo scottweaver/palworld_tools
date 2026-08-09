@@ -1,6 +1,6 @@
 [package]
-name = "pal-tui"
-description = "Terminal UI for the Palworld breeding calculator"
+name = "pal-mcp"
+description = "Local MCP server exposing the Palworld breeding calculator to Claude clients"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,15 +8,16 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1.0"
-dirs = "6.0.0"
 pal-core = { workspace = true, features = ["vendored-data"] }
 pal-pool.workspace = true
-pal-save.workspace = true
 pal-solver.workspace = true
-ratatui = "0.30"
+rmcp = { version = "3.1", features = ["server", "macros", "transport-io", "schemars"] }
+schemars = "1.0"
 serde.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+
+[dev-dependencies]
 serde_json.workspace = true
-tui-markdown = { version = "0.3.9", default-features = false }
 
 [lints]
 workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "pal-pool"
+description = "Shared owned-pool loading for Palworld frontends: a save file or pals TOML, sniffed by content"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pal-core.workspace = true
+pal-save.workspace = true
+pal-solver.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml = "1.1"
+
+[dev-dependencies]
+pal-core = { workspace = true, features = ["vendored-data"] }
+
+[lints]
+workspace = true

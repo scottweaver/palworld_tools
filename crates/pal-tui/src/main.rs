@@ -4,9 +4,7 @@
 
 mod app;
 mod command;
-mod pals_file;
 mod plan_store;
-mod pool;
 mod ui;
 
 use std::sync::mpsc;
@@ -53,9 +51,9 @@ fn main() -> Result<()> {
     let solver: &'static Solver<'static> =
         Box::leak(Box::new(Solver::new(db, index, odds, iv_odds)));
 
-    let (owned, pool_status) = match pool::load(&pals_path, db)? {
-        pool::Loaded::Pool { owned, status } => (owned, status),
-        pool::Loaded::Missing => (
+    let (owned, pool_status) = match pal_pool::load(&pals_path, db)? {
+        pal_pool::Loaded::Pool { owned, status } => (owned, status),
+        pal_pool::Loaded::Missing => (
             Vec::new(),
             format!("{pals_path} not found — searching from an empty pool"),
         ),
