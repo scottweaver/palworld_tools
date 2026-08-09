@@ -564,17 +564,17 @@ impl<'db> App<'db> {
             "the pool did not come from a file — nothing to reload".clone_into(&mut self.status);
             return;
         };
-        match crate::pool::load(&path, self.db()) {
-            Ok(crate::pool::Loaded::Pool { owned, status }) => {
+        match pal_pool::load(&path, self.db()) {
+            Ok(pal_pool::Loaded::Pool { owned, status }) => {
                 self.owned = owned;
                 self.replan();
                 self.status = format!("reloaded: {status}");
             }
-            Ok(crate::pool::Loaded::Missing) => {
+            Ok(pal_pool::Loaded::Missing) => {
                 self.status = format!("{path} not found — keeping the current pool");
             }
             Err(error) => {
-                self.status = format!("reload failed: {error:#} — keeping the current pool");
+                self.status = format!("reload failed: {error} — keeping the current pool");
             }
         }
     }
