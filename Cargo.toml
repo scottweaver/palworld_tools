@@ -7,6 +7,7 @@ members = [
     "crates/pal-pool",
     "crates/pal-tui",
     "crates/pal-gui",
+    "crates/pal-mcp",
 ]
 
 [workspace.package]

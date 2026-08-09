@@ -84,4 +84,14 @@ impl ChildIndex {
     pub fn child_between(&self, male: &PalName, female: &PalName) -> Option<&PalName> {
         self.by_male.get(male)?.get(female)
     }
+
+    /// Every concrete `(male, female, child)` entry, in unspecified
+    /// order — the inverse-query surface (which pairs produce X?).
+    pub fn pairings(&self) -> impl Iterator<Item = (&PalName, &PalName, &PalName)> {
+        self.by_male.iter().flat_map(|(male, by_female)| {
+            by_female
+                .iter()
+                .map(move |(female, child)| (male, female, child))
+        })
+    }
 }

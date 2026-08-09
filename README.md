@@ -51,6 +51,9 @@ Rust.
   changing anything mid-search supersedes it.
 - Fully self-contained binary: the game database is embedded, and
   `:help` / `:readme` render the documentation in-app.
+- **MCP server** — `pal-mcp` exposes the same calculator to Claude
+  Desktop / Cowork / Claude Code as a local MCP server, so you can
+  ask breeding questions in chat against your own save.
 
 ## Installation
 
@@ -214,6 +217,47 @@ useful when your box lacks a bridge species. Wild pals contribute no
 passive skills, and capture effort isn't costed yet (a caught
 partner looks free next to hatching eggs).
 
+## MCP server for Claude
+
+`pal-mcp` is the calculator as a local
+[MCP](https://modelcontextprotocol.io) stdio server: a Claude client
+calls its tools, your save never leaves the machine.
+
+```sh
+cargo build --release -p pal-mcp
+```
+
+Claude Desktop / Cowork — add to `claude_desktop_config.json`
+(macOS: `~/Library/Application Support/Claude/`):
+
+```json
+{
+  "mcpServers": {
+    "palworld": {
+      "command": "/path/to/palworld_tools/target/release/pal-mcp",
+      "args": ["/path/to/your/Level.sav"]
+    }
+  }
+}
+```
+
+Claude Code:
+
+```sh
+claude mcp add palworld -- /path/to/target/release/pal-mcp /path/to/Level.sav
+```
+
+The one argument is the pool, sniffed by content exactly like the
+TUI's: a Palworld `Level.sav` or a `pals.toml`.
+
+Tools: `find_breeding_path` (ranked plans — passives, IV minimums,
+progenitor anchors, wild opt-in), `list_pals` (filtered pool
+inspection), `reload_pool` (re-import after an in-game save),
+`pal_info`, `breeding_combos` (child of a pair / pairs producing a
+child), and `list_passives`. Species and passive arguments accept
+display or internal names, case-insensitively; plan responses carry
+both.
+
 ## How the math works
 
 The model follows palcalc:
@@ -258,7 +302,9 @@ the format truly moves.
 | `pal-core` | Game-data model + loaders (the only code that parses the database) |
 | `pal-solver` | Breeding search: child lookup, passive odds, reachability, path search |
 | `pal-save` | `Level.sav` import: container, GVAS, character extraction |
+| `pal-pool` | Shared pool loading (save or TOML, sniffed by content) for the frontends |
 | `pal-tui` | The terminal UI |
+| `pal-mcp` | Local MCP server for Claude clients |
 | `pal-gui` | Desktop GUI (planned) |
 
 Development gates, CI-enforced: `cargo fmt`,
@@ -273,7 +319,6 @@ saves are never committed).
 
 - Desktop GUI (`pal-gui`)
 - Solver refinements: capture-effort costing, wall-clock effort
-- Background search worker for the heaviest queries
 - Dedicated-server admin tools; pal data website
 
 ## Credits and license
