@@ -193,6 +193,20 @@ pub struct BreedingCombosResponse {
 pub struct ListPassivesRequest {
     /// Substring filter on display or internal name.
     pub filter: Option<String>,
+    /// Only passives installable at the surgery table.
+    #[serde(default)]
+    pub surgery_only: bool,
+}
+
+/// Surgery-table install requirements for one passive.
+#[derive(Serialize, JsonSchema)]
+pub struct SurgeryJson {
+    /// Gold cost; absent for consumable-item-only installs.
+    pub gold_cost: Option<u32>,
+    /// Internal id of the required item; absent for gold-only
+    /// installs. (Checking your inventory for it is not supported
+    /// yet.)
+    pub required_item: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -203,6 +217,9 @@ pub struct PassiveInfoJson {
     pub rank: i8,
     pub random_inheritance_allowed: bool,
     pub random_inheritance_weight: u32,
+    /// Present when the passive can be installed at the surgery
+    /// table.
+    pub surgery: Option<SurgeryJson>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -510,7 +527,7 @@ impl PalMcpServer {
     }
 
     #[tool(
-        description = "List passive skills (name, tier rank, random-inheritance data), optionally filtered by a name substring."
+        description = "List passive skills (name, tier rank, random-inheritance data, surgery-table install cost/item), optionally filtered by a name substring or to surgery-installable passives only."
     )]
     pub fn list_passives(
         &self,
@@ -521,10 +538,11 @@ impl PalMcpServer {
         let mut matching: Vec<&PassiveSkill> = db
             .passives()
             .filter(|skill| {
-                query.as_deref().is_none_or(|wanted| {
-                    skill.display_name.to_ascii_lowercase().contains(wanted)
-                        || skill.name.as_str().to_ascii_lowercase().contains(wanted)
-                })
+                (!request.surgery_only || skill.surgery.is_some())
+                    && query.as_deref().is_none_or(|wanted| {
+                        skill.display_name.to_ascii_lowercase().contains(wanted)
+                            || skill.name.as_str().to_ascii_lowercase().contains(wanted)
+                    })
             })
             .collect();
         matching.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -536,6 +554,10 @@ impl PalMcpServer {
                 rank: skill.rank,
                 random_inheritance_allowed: skill.random_inheritance_allowed,
                 random_inheritance_weight: skill.random_inheritance_weight,
+                surgery: skill.surgery.as_ref().map(|surgery| SurgeryJson {
+                    gold_cost: surgery.gold_cost(),
+                    required_item: surgery.required_item().map(ToString::to_string),
+                }),
             })
             .collect();
         Json(ListPassivesResponse {
@@ -955,6 +977,7 @@ mod tests {
         let server = server_with_toml("");
         let Json(response) = server.list_passives(params(ListPassivesRequest {
             filter: Some("swift".to_owned()),
+            surgery_only: false,
         }));
         assert!(response.total >= 1);
         assert!(
@@ -962,6 +985,34 @@ mod tests {
                 .passives
                 .iter()
                 .any(|passive| passive.display_name == "Swift")
+        );
+    }
+
+    #[test]
+    fn list_passives_surgery_filter_returns_install_requirements() {
+        let server = server_with_toml("");
+        let Json(response) = server.list_passives(params(ListPassivesRequest {
+            filter: None,
+            surgery_only: true,
+        }));
+        assert!(response.total > 20, "got {}", response.total);
+        assert!(response.passives.iter().all(|p| p.surgery.is_some()));
+
+        let shapes = response
+            .passives
+            .iter()
+            .filter_map(|p| p.surgery.as_ref())
+            .fold((0, 0, 0), |(gold, both, item), surgery| {
+                match (surgery.gold_cost.is_some(), surgery.required_item.is_some()) {
+                    (true, false) => (gold + 1, both, item),
+                    (true, true) => (gold, both + 1, item),
+                    (false, true) => (gold, both, item + 1),
+                    (false, false) => unreachable!("empty surgery entry served"),
+                }
+            });
+        assert!(
+            shapes.0 > 0 && shapes.1 > 0 && shapes.2 > 0,
+            "shapes: {shapes:?}"
         );
     }
 

@@ -56,6 +56,57 @@ impl fmt::Display for PassiveName {
     }
 }
 
+/// Canonical item identifier (the game's internal name). The
+/// database references items (surgery requirements) without carrying
+/// item definitions, so this name resolves outside the [`PalDb`].
+#[derive(Clone, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct ItemName(String);
+
+impl ItemName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ItemName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// How a passive is installed at the surgery table. Absent from
+/// [`PassiveSkill::surgery`] when the skill cannot be installed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Surgery {
+    Gold { cost: u32 },
+    GoldAndItem { cost: u32, item: ItemName },
+    Item { item: ItemName },
+}
+
+impl Surgery {
+    #[must_use]
+    pub fn gold_cost(&self) -> Option<u32> {
+        match self {
+            Self::Gold { cost } | Self::GoldAndItem { cost, .. } => Some(*cost),
+            Self::Item { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn required_item(&self) -> Option<&ItemName> {
+        match self {
+            Self::Gold { .. } => None,
+            Self::GoldAndItem { item, .. } | Self::Item { item } => Some(item),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Gender {
     Male,
@@ -251,6 +302,7 @@ pub struct PassiveSkill {
     pub standard: bool,
     pub random_inheritance_allowed: bool,
     pub random_inheritance_weight: u32,
+    pub surgery: Option<Surgery>,
 }
 
 /// Inheritance weight tables, each keyed by outcome count (e.g. weight

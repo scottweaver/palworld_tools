@@ -254,7 +254,8 @@ Tools: `find_breeding_path` (ranked plans — passives, IV minimums,
 progenitor anchors, wild opt-in), `list_pals` (filtered pool
 inspection), `reload_pool` (re-import after an in-game save),
 `pal_info`, `breeding_combos` (child of a pair / pairs producing a
-child), and `list_passives`. Species and passive arguments accept
+child), and `list_passives` (incl. surgery-table install cost and
+required item per passive). Species and passive arguments accept
 display or internal names, case-insensitively; plan responses carry
 both.
 

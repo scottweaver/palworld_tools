@@ -13,8 +13,8 @@ use serde::Deserialize;
 
 use crate::model::{
     BreedingCombo, BreedingDb, BreedingMechanics, BreedingParent, DbVersion, Gender,
-    GenderProbability, InvalidGenderProbability, Pal, PalDb, PalId, PalName, ParentGender,
-    PassiveName, PassiveSkill, WildLevels,
+    GenderProbability, InvalidGenderProbability, ItemName, Pal, PalDb, PalId, PalName,
+    ParentGender, PassiveName, PassiveSkill, Surgery, WildLevels,
 };
 
 /// The palcalc database version this loader understands. Bump together
@@ -230,10 +230,23 @@ struct RawPassiveSkill {
     is_standard_passive_skill: bool,
     random_inheritance_allowed: bool,
     random_inheritance_weight: u32,
+    surgery_cost: u32,
+    surgery_required_item: Option<String>,
 }
 
 impl RawPassiveSkill {
     fn into_model(self) -> PassiveSkill {
+        let surgery = match (self.surgery_cost, self.surgery_required_item) {
+            (0, None) => None,
+            (0, Some(item)) => Some(Surgery::Item {
+                item: ItemName::new(item),
+            }),
+            (cost, None) => Some(Surgery::Gold { cost }),
+            (cost, Some(item)) => Some(Surgery::GoldAndItem {
+                cost,
+                item: ItemName::new(item),
+            }),
+        };
         PassiveSkill {
             name: PassiveName::new(self.internal_name),
             display_name: self.name,
@@ -241,6 +254,7 @@ impl RawPassiveSkill {
             standard: self.is_standard_passive_skill,
             random_inheritance_allowed: self.random_inheritance_allowed,
             random_inheritance_weight: self.random_inheritance_weight,
+            surgery,
         }
     }
 }
