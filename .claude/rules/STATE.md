@@ -5,7 +5,7 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-09 (pal-mcp + pal-pool, PR #44 open)
+Last updated: 2026-08-09 (post pal-mcp merge, PR #44)
 
 ## Active workstream
 
@@ -40,8 +40,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `61eb665`, CI green |
-| `feat/pal-mcp` | MCP server + pal-pool extraction | PR #44 open, 120 tests |
+| `main` | trunk | at `5b1c924`, CI green, 120 tests |
 
 ## Next up
 
@@ -60,7 +59,7 @@ the remaining stub.
 ## Most recent meaningful progress
 
 - **2026-08-09 — MCP server: the calculator in Claude chat (PR #44,
-  open).** New `pal-mcp` frontend: local stdio MCP server on the
+  merged).** New `pal-mcp` frontend: local stdio MCP server on the
   official `rmcp` SDK (vetted; tokio confined to the binary shell)
   with six tools — find_breeding_path, list_pals, reload_pool,
   pal_info, breeding_combos, list_passives. Pool loading graduated
