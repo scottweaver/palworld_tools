@@ -5,7 +5,7 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-09 (post pal-mcp merge, PR #44)
+Last updated: 2026-08-09 (post pal-mcp identity fix, PR #46)
 
 ## Active workstream
 
@@ -40,7 +40,7 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `5b1c924`, CI green, 120 tests |
+| `main` | trunk | at `26b7699`, CI green, 121 tests |
 
 ## Next up
 
@@ -67,9 +67,14 @@ the remaining stub.
   replacing anyhow at the library boundary) so the MCP and TUI views
   of a save can never drift; ChildIndex gained a `pairings()`
   accessor for inverse combo queries. ARCHITECTURE.md updated in-PR
-  (structural). Risk: handlers are tested directly (10 tests), not
-  through a stdio handshake — the first real client session proves
-  the wire.
+  (structural). The stdio wire was then proven directly against the
+  real save (initialize → tools/list → list_pals; 889 pals, 873
+  unique profiles), the server is registered in the user's Claude
+  Desktop config (absolute paths — Desktop does no ~/$HOME
+  expansion), and PR #46 (same day) fixed the handshake identity to
+  report `pal-mcp` rather than the SDK default `rmcp`. Remaining
+  risk: none observed in a live handshake; first in-chat session is
+  the last unproven step.
 - **2026-08-08 — TUI batch: rendered docs, :reload, delete confirm
   (PRs #37 + #38 + #39, merged together).** The doc viewer renders
   :help/:readme through a custom tui-markdown StyleSheet (no `#`
