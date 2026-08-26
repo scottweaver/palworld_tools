@@ -36,18 +36,19 @@ existing code).
 
 ## Crate layering
 
-- The project is a cargo workspace (2026-08-02). Dependency DAG:
-  frontends (`pal-tui`, `pal-gui`) → `pal-solver` → `pal-core`, and
-  `pal-tui` → `pal-save` → `pal-core` (pal-save opened 2026-08-03);
-  `pal-core` depends on no workspace crate. Future feature crates
-  (`pal-server`, `pal-web`) sit beside `pal-solver` and depend only
-  on `pal-core` unless a dialog decides otherwise. `pal-save` knows
-  nothing of `pal-solver`: frontends convert imported pals into
-  solver inputs.
+- The project is a cargo workspace (2026-08-02). Dependency DAG
+  (extended 2026-08-09, pal-mcp dialog): frontends (`pal-tui`,
+  `pal-gui`, `pal-mcp`) → `pal-solver` → `pal-core`; pool-consuming
+  frontends (`pal-tui`, `pal-mcp`) → `pal-pool` → {`pal-save`,
+  `pal-solver`} → `pal-core`; `pal-core` depends on no workspace
+  crate. Future feature crates (`pal-server`, `pal-web`) sit beside
+  `pal-solver` and depend only on `pal-core` unless a dialog decides
+  otherwise. `pal-save` knows nothing of `pal-solver`: `pal-pool`
+  owns the imported-pal → solver-input conversion (graduated out of
+  `pal-tui` 2026-08-09 when a second frontend needed it).
 - Frontends are thin (2026-08-02): no breeding, probability, or
-  game-data logic in `pal-tui`/`pal-gui`. The MVP ships both, so any
-  logic one frontend needs, the other needs — it lives in a library
-  crate.
+  game-data logic in `pal-tui`/`pal-gui`/`pal-mcp`. Any logic one
+  frontend needs, the others need — it lives in a library crate.
 - `pal-solver` performs no I/O and knows nothing about presentation
   (2026-08-02): it consumes `pal-core` types and returns result
   types; loading `db.json` or a save file is the caller's job.
@@ -77,6 +78,15 @@ existing code).
   Unhinted map structs are self-discovered at parse time and
   reported, so game-version drift fails loud or heals, never
   misparses silently.
+- The MCP surface is open (2026-08-09, design dialog): `pal-mcp` is
+  a local stdio server built on the official `rmcp` SDK (a
+  core-architecture dependency, vetted 2026-08-09; its tokio runtime
+  stays confined to that binary shell — the solver remains sync and
+  pure). All tool-input resolution (species/passive/gender strings →
+  typed names) happens in `pal-mcp::server` at the boundary;
+  responses serialize typed results carrying both canonical and
+  display names. Local stdio only, read-only over the save; a remote
+  transport is a future dialog.
 - Planned boundaries, TBD until their feature starts:
   dedicated-server REST/RCON (`pal-server`), website HTTP surface
   (`pal-web`). Opening either is structural (below).
@@ -100,6 +110,7 @@ cleanup:
 - `crates/pal-core/**` — the data model and the `db.json` loader are
   the schema boundary
 - `crates/pal-save/src/level.rs` — the save-file wire boundary
+- `crates/pal-mcp/src/server.rs` — the MCP tool surface
 - `data/*.json` — vendored database refreshes
 - any new directory under `crates/`
 
