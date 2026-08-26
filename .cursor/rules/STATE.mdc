@@ -11,24 +11,32 @@ first to learn where the project stands right now. It answers "where
 are we" — never "how does this work" (that's ARCHITECTURE.md and the
 code) and never "how should we work" (that's METHODOLOGIES.md).
 
-Last updated: 2026-08-04
+Last updated: 2026-08-09 (post pal-mcp identity fix, PR #46)
 
 ## Active workstream
 
 The MVP breeding calculator is feature-complete as a TUI and
-battle-tested against the user's real save (PRs #1–#29, 2026-08-02
-… 08-03). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
+battle-tested against the user's real save (PRs #1–#42, 2026-08-02
+… 08-08). Stack: **pal-core** (vendored palcalc db v27 @ `c59712e`,
 typed loader, embeddable via `vendored-data`); **pal-solver**
 (parity-anchored search — arena + frontier expansion +
 species-group pruning + incumbent cut, rayon; depth ≤ 24;
-progenitor-anchor, wild-capture, and IV-minimum modes); **pal-save** (`Level.sav`
+progenitor-anchor, wild-capture, and IV-minimum modes; frontier
+discipline + heap-free pair attempts keep 4-passive searches ≤2s); **pal-save** (`Level.sav`
 import incl. PlM/Oodle containers and self-discovering GVAS hints;
-validated: 771 pals, all with IVs); **pal-tui** (reactive
-planner — auto re-search on any change, mouse + ⇧click progenitors,
-tier-colored passives, pinned selections, family-tree plans, wild
-opt-in via F2, saved-plan library, F6 pool reload, h/a/d IV
-floors). **GUI stack (egui vs Tauri) deliberately deferred** until
-pal-gui starts. 81 tests, CI runs `--all-features`. Scope
+validated: 771 pals, all with IVs); **pal-pool** (shared
+save-or-TOML pool loading, graduated from pal-tui); **pal-mcp**
+(local stdio MCP server for Claude Desktop/Cowork/Claude Code —
+six tools over the same libraries, PR #44); **pal-tui** (reactive
+planner — auto re-search on any change with searches on a background
+worker (spinner in the Plans title, latest-wins supersession), mouse
++ ⇧click progenitors, tier-colored passives, pinned selections,
+family-tree plans, wild opt-in via F2, saved-plan library incl.
+Ctrl+S/Ctrl+L and x-delete behind a y/n confirm modal, F6 pool
+reload, h/a/d IV floors, `:` command prompt — :help/:readme embedded
+docs rendered without markdown source markers, plus
+:w/:o/:dd/:clear/:reload working verbs). **GUI stack (egui vs Tauri) deliberately
+deferred** until pal-gui starts. 120 tests, CI runs `--all-features`. Scope
 (binding): umbrella Rust toolset for Palworld — breeding calculator
 (done as TUI), save-file tools (import done), server admin tools,
 pal data website; thin frontends over shared library crates, pal-gui
@@ -38,18 +46,17 @@ the remaining stub.
 
 | Branch | Purpose | Status |
 |---|---|---|
-| `main` | trunk | at `6e47199`, CI green, 81 tests |
+| `main` | trunk | at `26b7699`, CI green, 121 tests |
 
 ## Next up
 
 1. pal-gui: run the deferred egui-vs-Tauri stack dialog, then mirror
    the TUI slice over the same library APIs (save import included —
-   pal-save shipped in PR #17).
+   pal-save shipped in PR #17, pool loading now shared via pal-pool).
 2. Remaining solver refinements toward palcalc parity (time-based
-   effort, capture-effort costing for wild pals) and TUI follow-ups
-   (in-app pool editing; search off the UI thread — worst-case
-   searches are ~2s now, enough to warrant a worker for
-   responsiveness).
+   effort, capture-effort costing for wild pals); solver-level
+   cancellation is now low-urgency — worst observed search is
+   ~1.7s. TUI follow-up: in-app pool editing.
 3. PROJECT.md carve-out gap: docs PRs carry generated
    `.cursor/rules/*.mdc` mirrors, which sit outside the
    `.claude/rules/` auto-merge carve-out — extend the binding or
@@ -57,6 +64,77 @@ the remaining stub.
 
 ## Most recent meaningful progress
 
+- **2026-08-09 — MCP server: the calculator in Claude chat (PR #44,
+  merged).** New `pal-mcp` frontend: local stdio MCP server on the
+  official `rmcp` SDK (vetted; tokio confined to the binary shell)
+  with six tools — find_breeding_path, list_pals, reload_pool,
+  pal_info, breeding_combos, list_passives. Pool loading graduated
+  from pal-tui into the new shared `pal-pool` crate (typed errors
+  replacing anyhow at the library boundary) so the MCP and TUI views
+  of a save can never drift; ChildIndex gained a `pairings()`
+  accessor for inverse combo queries. ARCHITECTURE.md updated in-PR
+  (structural). The stdio wire was then proven directly against the
+  real save (initialize → tools/list → list_pals; 889 pals, 873
+  unique profiles), the server is registered in the user's Claude
+  Desktop config (absolute paths — Desktop does no ~/$HOME
+  expansion), and PR #46 (same day) fixed the handshake identity to
+  report `pal-mcp` rather than the SDK default `rmcp`. Remaining
+  risk: none observed in a live handshake; first in-chat session is
+  the last unproven step.
+- **2026-08-08 — TUI batch: rendered docs, :reload, delete confirm
+  (PRs #37 + #38 + #39, merged together).** The doc viewer renders
+  :help/:readme through a custom tui-markdown StyleSheet (no `#`
+  markers or fence lines; rendered Text cached per doc — no more
+  per-frame re-parse); `:reload` re-imports the pool via the same
+  path as F6; keyed deletes (x/Ctrl+D/Delete/Backspace) gate behind
+  a centered y/n modal naming the plan, with :dd staying immediate
+  by design (settled in a design dialog). Overlay gained a Confirm
+  variant — the no-wildcard-match rule surfaced every site needing
+  a decision. Risk: the three PRs merged as disjoint hunks over
+  shared files; the combination was verified post-merge (fmt,
+  clippy, 107 tests) rather than per-PR.
+- **2026-08-08 — Solver perf pass: 4-passive searches 100s → 1.5s
+  (PR #40, merged).** User report: Beakon + Legend/Diamond
+  Body/Swift/Eternal Engine took a minute+ for a 3-step plan.
+  Root cause: every mid-beam cost refinement re-expanded against
+  the whole arena (52k admissions, 1.5k new states in one round),
+  and ~46M pair attempts per round each allocated a full Record.
+  Fix: frontier admission only on new-state or per-state best
+  improvement, heap-free Candidate pair attempts pruned by a
+  group-local beam + in-group incumbent cut, and mask-derived pool
+  sizes. Identical plans everywhere (main-worktree baseline);
+  wild+3-progenitor pathological case 15.4s → 1.03s at depth 32.
+  perf.rs keeps the scenario (PERF_DEPTHS knob) as the regression
+  harness. Risk: expansion is stricter than the beam — a mid-beam
+  record with better gendered cost no longer spawns children; no
+  observed plan drift. Validated on the real save 2026-08-08: a
+  4-passive Anubis goal (the densest breeding hub) returned
+  "basically instantaneous" per the user.
+- **2026-08-05 — Search worker + spinner, command verbs (PRs #34 +
+  #35, merged).** Searches moved off the UI thread: App snapshots
+  each question into a generation-tagged request, a worker thread
+  computes it, and only the latest generation may apply — parked
+  requests replace (latest-wins), stale outcomes are discarded, and
+  clearing the target cancels. A braille spinner animates in the
+  Plans title; Inline mode keeps the old synchronous path for tests.
+  #34 added prompt verbs (:w save, :o open library, :dd delete,
+  :clear reset goal); a later fix made plain `x` the in-library
+  delete key after `dd` collided with the d IV-floor key. Risk: no
+  solver-level cancellation yet — a superseded deep search finishes
+  before its successor starts (Next up #2).
+- **2026-08-05 — Command prompt + Ctrl shortcuts (PRs #31 + #32,
+  merged).** `:` opens a vim-style prompt: `:help` renders a new
+  embedded key/feature reference (`crates/pal-tui/help.md`),
+  `:readme` the full README, `:q`/`:quit` quits; the viewer is
+  full-screen and scrollable (keys + wheel). Rendering is
+  tui-markdown 0.3.9 (default-features off; picked for box-drawing
+  tables), with soft breaks preprocessed to hard breaks outside code
+  fences so the authored ~72-col layout survives unwrapped and
+  scroll math stays exact. Overlay state is an enum (None / Prompt /
+  Doc) that owns keys and clicks while open. #31 added Ctrl+S/Ctrl+L
+  as save/library synonyms. Risk: help.md's key table duplicates the
+  README's — both are now guarded by a ≤100-col rendered-width test,
+  but content drift needs auditing on UX changes.
 - **2026-08-04 — IV minimums (PR #29, merged).** palcalc's
   threshold model end to end: h/a/d set per-stat floors, plans route
   only through qualifying parents, costs absorb the 5/9-5/18-1/6
@@ -95,58 +173,6 @@ the remaining stub.
   change re-plans automatically; stale Plans impossible), plus the
   three items below. Permanent real-save diagnostics landed in
   crates/pal-tui/tests/repro.rs.
-- **2026-08-03 — Import bug: every pal's passives silently dropped.**
-  `PassiveSkillList` parses into gvas's `ArrayProperty::Names`,
-  which the extractor didn't handle — all 704 pals imported
-  passive-less (also why passive-constrained searches returned
-  nothing). Found via a user report (Loomen + Diamond Body + Demon
-  God → no plans); fixed, revalidated (731 pals, 716 with passives),
-  and `real_save.rs` now asserts nonzero carriers. Lesson: "0
-  unknown passives" was consistent with "0 passives extracted" —
-  validation now checks presence, not just absence of errors.
-- **2026-08-03 — Depth cap 8 → 24 + incumbent cut.** With wild off
-  by default, closed-pool routing can legitimately exceed the old
-  7+1 bound. Solver gains a branch-and-bound cut (candidates whose
-  root cost + remaining-distance eggs can't beat the worst incumbent
-  plan are dropped once max_results plans exist). Measured on the
-  real save at depth 24: 0.13s wild-off / 0.28s wild-on. Risk: the
-  pathological combo (deep + wild + 3 progenitor marks) still runs
-  ~15s on the UI thread — the state-space churn needs a
-  priority-queue search, queued with the worker-thread item.
-- **2026-08-03 — Mouse support in the TUI.** Left-click focuses a
-  pane and acts on the row under the pointer (target in Pals, toggle
-  in Passives, plan selection in Results); ⇧click marks a progenitor.
-  Hit-testing shares the draw geometry (`pane_areas`) and replicates
-  ratatui's keep-selection-visible scroll offset. Risk: some
-  terminals reserve ⇧click for native text selection — F4 remains
-  the fallback.
-- **2026-08-03 — Passive tier colors in the TUI (PR #19, merged).**
-  Passives render
-  in the game's palette everywhere they appear (Passives pane + plan
-  trees): detrimental (rank < 0) red, regular (1–3) gold, "rainbow"
-  tier (4+) teal/cyan; plan trees moved from plain strings to styled
-  spans to carry it. Risk: none noted — data-driven off
-  `PassiveSkill.rank`.
-- **2026-08-03 — Save-file import built (pal-save crate).**
-  `Level.sav` → typed pals: gvas crate parses the Palworld container
-  natively; `level.rs` extracts `CharacterSaveParameterMap` raw
-  blobs with **self-discovering struct hints** (MissingHint errors
-  drive retry, Guid backtracking, discovered hints reported);
-  `import.rs` resolves species (BOSS_/role prefixes stripped),
-  gender, and passives against PalDb with a full skip report. TUI
-  pool argument auto-detects .sav vs toml (identical profiles
-  deduped). **Validated on the real save**: PlM/Oodle container
-  support added (oozextract; the save era post-dates gvas's zlib
-  path), nested blobs decode under the file's custom versions
-  (12-vs-24-byte vector widths), 706/706 entries → 704 pals, 221
-  species, player detected, 0.4s. Why: real pools, not hand-typed
-  toml. Risk: hint seeds + prefixes track game version — discovery
-  self-heals and `decode_issues`/`malformed_entries` make drift
-  loud.
-
-## Blocked / waiting
-
-- *(nothing)*
 
 ## Maintenance
 

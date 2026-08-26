@@ -394,3 +394,37 @@ nobody reaches for them by default:
 - Public API surfaces build with `#![deny(missing_docs)]` once the
   crate stabilizes; internal crates start with it off, API-surface
   crates start with it on.
+
+## External reference: Rust10x
+
+[Rust10x](https://github.com/rust10x/rust10x) is a production-Rust
+knowledge pack — best-practice guides plus self-contained, compilable
+sample projects — that supplements this file. Consult it for topics
+this file does not cover:
+
+- `pack/guide/base/` — Cargo.toml layout and lint management, test
+  organization and conventions, code/module structure, CLI structure
+  (Clap parsing separated from domain logic), example-file
+  conventions, Rust 2024 edition notes, and the function-options /
+  builder / derive-alias patterns.
+- `pack/guide/domain/` — worked architectures: event/channel design,
+  Unix-socket IPC with length-delimited framing, JSON-RPC web APIs.
+- `pack/samples/` — compilable micro-projects demonstrating the
+  domain guides; `pack/code-map.json` indexes the whole pack.
+
+**Precedence: this file wins on every conflict.** Rust10x is a
+reference, not an authority. Two known conflicts, already resolved
+in this file's favor:
+
+- **Errors.** Rust10x rejects `thiserror`/`anyhow` in favor of
+  `derive_more` with a `Custom(String)` catch-all variant. The rules
+  above stand: purpose-built `thiserror` enums, `anyhow` only at the
+  binary top level, and no stringly-typed `Custom(String)` variant —
+  that is a wide type wearing an enum costume.
+- **Comments.** Rust10x prescribes `// region: --- Name` and
+  `// -- Section` markers. Those are section labels; the comment
+  rules above apply — extract the section into a named function
+  instead.
+
+Adopting any further Rust10x convention is a deliberate edit to this
+file, never something inferred from the reference during a task.
